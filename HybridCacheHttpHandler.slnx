@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HybridCacheHttpHandler/HybridCacheHttpHandler.csproj" Id="3c4df512-777c-4392-b148-6d5257f4443f" />
+  </Folder>
+  <Folder Name="/test/">
+    <Project Path="test/Tests/Tests.csproj" Id="cb30d6ad-7d55-43ff-af2e-b7e23884dfc5" />
+  </Folder>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/HttpClientFactorySample/HttpClientFactorySample.csproj" />
+    <Project Path="samples/YarpCachingProxySample/YarpCachingProxySample.csproj" />
+  </Folder>
+</Solution>

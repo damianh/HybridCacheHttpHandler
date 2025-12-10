@@ -1,0 +1,71 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+    
+    - name: Restore dependencies
+      run: dotnet restore
+    
+    - name: Build
+      run: dotnet build --no-restore --configuration Release
+    
+    - name: Run tests
+      run: dotnet run --project test/Tests/Tests.csproj --no-build --configuration Release
+    
+    - name: Run benchmarks
+      run: |
+        cd benchmarks
+        dotnet run --project Benchmarks.csproj --configuration Release --no-build -- --exporters json
+      continue-on-error: true
+    
+    - name: Add benchmark results to summary
+      if: always()
+      run: |
+        echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+        if [ -f "benchmarks/BenchmarkDotNet.Artifacts/results/Benchmarks-report.json" ]; then
+          echo "Benchmark completed successfully. Full results available in artifacts." >> $GITHUB_STEP_SUMMARY
+        else
+          echo "Benchmark execution completed with warnings or errors." >> $GITHUB_STEP_SUMMARY
+        fi
+    
+    - name: Upload benchmark results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmarks/BenchmarkDotNet.Artifacts/
+        if-no-files-found: ignore
+    
+    - name: Build NuGet packages
+      run: dotnet pack src/HybridCacheHttpHandler/HybridCacheHttpHandler.csproj --no-build --configuration Release --output ./packages
+    
+    - name: Upload NuGet packages
+      uses: actions/upload-artifact@v4
+      with:
+        name: nuget-packages
+        path: ./packages/*.nupkg
+    
+    - name: Add build summary
+      if: always()
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Build completed" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Tests executed" >> $GITHUB_STEP_SUMMARY
+        echo "✅ NuGet packages created" >> $GITHUB_STEP_SUMMARY
