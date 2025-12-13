@@ -2,6 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
+using Microsoft.Extensions.Caching.Hybrid;
 
 namespace DamianH.HybridCacheHttpHandler;
 
@@ -447,5 +448,100 @@ public class ValidationTests
 
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
         requestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Cache_write_failure_during_304_revalidation_returns_cached_response()
+    {
+        var cache = new FaultyCacheOnSecondWrite();
+        var timeProvider = TestHelpers.CreateTimeProvider();
+
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                return new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new StringContent("original content"),
+                    Headers =
+                    {
+                        { "Cache-Control", "max-age=1" },
+                        { "ETag", "\"123\"" }
+                    }
+                };
+            }
+
+            // 304 with updated cache-control
+            return new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Headers =
+                {
+                    { "Cache-Control", "max-age=3600" },
+                    { "ETag", "\"123\"" }
+                }
+            };
+        });
+
+        var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
+        var client = new HttpClient(cacheHandler);
+
+        // First request - caches successfully
+        var response1 = await client.GetAsync("https://example.com/resource", _ct);
+        var body1 = await response1.Content.ReadAsStringAsync();
+        body1.ShouldBe("original content");
+
+        // Make stale
+        timeProvider.Advance(TimeSpan.FromSeconds(2));
+
+        // Second request - gets 304, cache write fails, but should still return cached body
+        var response2 = await client.GetAsync("https://example.com/resource", _ct);
+        var body2 = await response2.Content.ReadAsStringAsync();
+
+        body2.ShouldBe("original content"); // Should still get cached content
+        response2.StatusCode.ShouldBe(HttpStatusCode.OK);
+        requestCount.ShouldBe(2); // Both requests hit backend
+    }
+
+    private class FaultyCacheOnSecondWrite : HybridCache
+    {
+        private readonly HybridCache _innerCache = TestHelpers.CreateCache();
+        private int _setCallCount;
+
+        public override ValueTask<T> GetOrCreateAsync<TState, T>(
+            string key,
+            TState state,
+            Func<TState, Ct, ValueTask<T>> factory,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default)
+            => _innerCache.GetOrCreateAsync(key, state, factory, options, tags, cancellationToken);
+
+        public override ValueTask SetAsync<T>(
+            string key,
+            T value,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default)
+        {
+            _setCallCount++;
+            return _setCallCount > 1
+                ? throw new InvalidOperationException("Simulated cache write failure on revalidation")
+                : _innerCache.SetAsync(key, value, options, tags, cancellationToken);
+        }
+
+        public override ValueTask RemoveAsync(string key, Ct cancellationToken = default)
+            => _innerCache.RemoveAsync(key, cancellationToken);
+
+        public override ValueTask RemoveAsync(IEnumerable<string> keys, Ct cancellationToken = default)
+            => _innerCache.RemoveAsync(keys, cancellationToken);
+
+        public override ValueTask RemoveByTagAsync(string tag, Ct cancellationToken = default)
+            => _innerCache.RemoveByTagAsync(tag, cancellationToken);
+
+        public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default)
+            => _innerCache.RemoveByTagAsync(tags, cancellationToken);
     }
 }
