@@ -2,6 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
+using System.Net.Http.Headers;
 
 namespace DamianH.HybridCacheHttpHandler;
 
@@ -18,12 +19,13 @@ public class ContentSizeLimitTests
 
         // 1 KB content
         var content = new string('x', 1024);
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent(content),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent(content)
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var options = new HybridCacheHttpHandlerOptions
         {
@@ -47,12 +49,13 @@ public class ContentSizeLimitTests
 
         // 20 KB content (exceeds 10 KB limit)
         var content = new string('x', 20 * 1024);
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent(content),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent(content)
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var options = new HybridCacheHttpHandlerOptions
         {
@@ -78,12 +81,13 @@ public class ContentSizeLimitTests
         var content = new byte[5 * 1024 * 1024];
         Array.Fill(content, (byte)'x');
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new ByteArrayContent(content),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new ByteArrayContent(content)
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -104,12 +108,13 @@ public class ContentSizeLimitTests
         var content = new byte[11 * 1024 * 1024];
         Array.Fill(content, (byte)'x');
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new ByteArrayContent(content),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new ByteArrayContent(content)
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -130,12 +135,13 @@ public class ContentSizeLimitTests
         var content = new byte[500 * 1024];
         Array.Fill(content, (byte)'x');
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new ByteArrayContent(content),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new ByteArrayContent(content)
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var options = new HybridCacheHttpHandlerOptions
         {
@@ -162,9 +168,9 @@ public class ContentSizeLimitTests
         var response = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent(content),
-            Headers = { { "Cache-Control", "max-age=3600" } }
+            Content = new StringContent(content)
         };
+        response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
 
         // Remove ContentLength to simulate chunked transfer
         response.Content.Headers.ContentLength = null;
@@ -195,12 +201,13 @@ public class ContentSizeLimitTests
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("small"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("small")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var options = new HybridCacheHttpHandlerOptions
         {
@@ -222,12 +229,13 @@ public class ContentSizeLimitTests
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent(""),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var options = new HybridCacheHttpHandlerOptions
         {

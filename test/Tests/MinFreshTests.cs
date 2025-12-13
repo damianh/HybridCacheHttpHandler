@@ -2,6 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
+using System.Net.Http.Headers;
 
 namespace DamianH.HybridCacheHttpHandler;
 
@@ -17,12 +18,13 @@ public class MinFreshTests
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("test content"),
-            Headers = { { "Cache-Control", "max-age=30" } }
-        });
+            Content = new StringContent("test content")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(30) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var handler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(handler);
@@ -36,7 +38,7 @@ public class MinFreshTests
 
         // Second request with min-fresh=30 (requires 30 seconds of remaining freshness)
         var request2 = new HttpRequestMessage(HttpMethod.Get, TestUrl);
-        request2.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue
+        request2.Headers.CacheControl = new CacheControlHeaderValue
         {
             MinFresh = TimeSpan.FromSeconds(30) // Requires response to be fresh for at least 30 more seconds
         };
@@ -56,12 +58,13 @@ public class MinFreshTests
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("content-1"),
-            Headers = { { "Cache-Control", "max-age=100" } }
-        });
+            Content = new StringContent("content-1")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(100) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var handler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(handler);
@@ -75,7 +78,7 @@ public class MinFreshTests
 
         // Second request with min-fresh=30 (requires 30 seconds of remaining freshness)
         var request2 = new HttpRequestMessage(HttpMethod.Get, TestUrl);
-        request2.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue
+        request2.Headers.CacheControl = new CacheControlHeaderValue
         {
             MinFresh = TimeSpan.FromSeconds(30)
         };
@@ -113,7 +116,7 @@ public class MinFreshTests
 
         // Request with min-fresh=50 should bypass cache
         var request2 = new HttpRequestMessage(HttpMethod.Get, TestUrl);
-        request2.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue
+        request2.Headers.CacheControl = new CacheControlHeaderValue
         {
             MinFresh = TimeSpan.FromSeconds(50) // Needs 50 seconds, only 40 available
         };

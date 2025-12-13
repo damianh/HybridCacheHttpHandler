@@ -2,6 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
+using System.Net.Http.Headers;
 
 namespace DamianH.HybridCacheHttpHandler;
 
@@ -48,12 +49,13 @@ public class FoundationTests
     {
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("cached content"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("cached content")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
 
@@ -75,12 +77,13 @@ public class FoundationTests
     {
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
 
@@ -96,12 +99,13 @@ public class FoundationTests
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
         const string OriginalContent = "original response body";
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent(OriginalContent),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent(OriginalContent)
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
 
@@ -120,12 +124,13 @@ public class FoundationTests
     {
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
 
@@ -140,12 +145,13 @@ public class FoundationTests
     {
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
 

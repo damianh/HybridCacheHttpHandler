@@ -2,6 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
+using System.Net.Http.Headers;
 using Microsoft.Extensions.Caching.Hybrid;
 using Nito.AsyncEx;
 
@@ -17,12 +18,13 @@ public class ErrorHandlingTests
     {
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
-        var mockHandler = new MockHttpMessageHandler(() => new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "max-age=60" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(60) };
+        var mockHandler = new MockHttpMessageHandler(() => mockResponse);
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -43,12 +45,13 @@ public class ErrorHandlingTests
     {
         var cache = new FaultyCache(shouldFailOnGet: true);
         var timeProvider = TestHelpers.CreateTimeProvider();
-        var mockHandler = new MockHttpMessageHandler(() => new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "max-age=60" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(60) };
+        var mockHandler = new MockHttpMessageHandler(() => mockResponse);
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -69,12 +72,13 @@ public class ErrorHandlingTests
     {
         var cache = new FaultyCache(shouldFailOnGet: true);
         var timeProvider = TestHelpers.CreateTimeProvider();
-        var mockHandler = new MockHttpMessageHandler(() => new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response from origin"),
-            Headers = { { "Cache-Control", "max-age=60" } }
-        });
+            Content = new StringContent("response from origin")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(60) };
+        var mockHandler = new MockHttpMessageHandler(() => mockResponse);
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -91,12 +95,13 @@ public class ErrorHandlingTests
     {
         var cache = new FaultyCache(shouldFailOnSet: true);
         var timeProvider = TestHelpers.CreateTimeProvider();
-        var mockHandler = new MockHttpMessageHandler(() => new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "max-age=60" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(60) };
+        var mockHandler = new MockHttpMessageHandler(() => mockResponse);
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -124,12 +129,13 @@ public class ErrorHandlingTests
         {
             requestStarted.Set(); // Signal that backend request has started
             await backendSignal.WaitAsync(_ct); // Wait for signal to proceed
-            return new HttpResponseMessage
+            var response = new HttpResponseMessage
             {
                 StatusCode = HttpStatusCode.OK,
-                Content = new StringContent("response"),
-                Headers = { { "Cache-Control", "max-age=60" } }
+                Content = new StringContent("response")
             };
+            response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(60) };
+            return response;
         });
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
@@ -161,12 +167,16 @@ public class ErrorHandlingTests
     {
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
-        var mockHandler = new MockHttpMessageHandler(request => Task.FromResult(new HttpResponseMessage
+        var mockHandler = new MockHttpMessageHandler(request =>
         {
-            StatusCode = HttpStatusCode.OK,
-            Content = new StringContent($"response for {request.RequestUri}"),
-            Headers = { { "Cache-Control", "max-age=60" } }
-        }));
+            var response = new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent($"response for {request.RequestUri}")
+            };
+            response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(60) };
+            return Task.FromResult(response);
+        });
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -190,12 +200,13 @@ public class ErrorHandlingTests
     {
         var cache = new FaultyCache(shouldFailOnRemove: true);
         var timeProvider = TestHelpers.CreateTimeProvider();
-        var mockHandler = new MockHttpMessageHandler(() => new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "no-store" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
+        var mockHandler = new MockHttpMessageHandler(() => mockResponse);
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -262,34 +273,19 @@ public class ErrorHandlingTests
             await _innerCache.RemoveAsync(key, cancellationToken);
         }
 
-        public override ValueTask RemoveAsync(IEnumerable<string> keys, Ct cancellationToken = default)
-        {
-            if (shouldFailOnRemove)
-            {
-                throw new InvalidOperationException("Simulated cache remove failure");
-            }
+        public override ValueTask RemoveAsync(IEnumerable<string> keys, Ct cancellationToken = default) =>
+            shouldFailOnRemove
+                ? throw new InvalidOperationException("Simulated cache remove failure")
+                : _innerCache.RemoveAsync(keys, cancellationToken);
 
-            return _innerCache.RemoveAsync(keys, cancellationToken);
-        }
+        public override ValueTask RemoveByTagAsync(string tag, Ct cancellationToken = default) =>
+            shouldFailOnRemove
+                ? throw new InvalidOperationException("Simulated cache remove failure")
+                : _innerCache.RemoveByTagAsync(tag, cancellationToken);
 
-        public override ValueTask RemoveByTagAsync(string tag, Ct cancellationToken = default)
-        {
-            if (shouldFailOnRemove)
-            {
-                throw new InvalidOperationException("Simulated cache remove failure");
-            }
-
-            return _innerCache.RemoveByTagAsync(tag, cancellationToken);
-        }
-
-        public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default)
-        {
-            if (shouldFailOnRemove)
-            {
-                throw new InvalidOperationException("Simulated cache remove failure");
-            }
-
-            return _innerCache.RemoveByTagAsync(tags, cancellationToken);
-        }
+        public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default) =>
+            shouldFailOnRemove
+                ? throw new InvalidOperationException("Simulated cache remove failure")
+                : _innerCache.RemoveByTagAsync(tags, cancellationToken);
     }
 }

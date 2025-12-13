@@ -4,6 +4,7 @@
 // Copyright Damian Hickey
 
 using System.Net;
+using System.Net.Http.Headers;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -26,11 +27,12 @@ public class IntegrationTests
         var hybridCache = serviceProvider.GetRequiredService<HybridCache>();
         var timeProvider = new FakeTimeProvider();
 
-        var handler = new TestHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        var mockResponse = new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("Response 1"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("Response 1")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var handler = new TestHandler(mockResponse);
 
         var cachingHandler = new HybridCacheHttpHandler(handler, hybridCache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         using var client = new HttpClient(cachingHandler);
@@ -58,11 +60,12 @@ public class IntegrationTests
         var hybridCache = serviceProvider.GetRequiredService<HybridCache>();
         var timeProvider = new FakeTimeProvider();
 
-        var handler = new TestHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        var mockResponse = new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("Direct response"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("Direct response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var handler = new TestHandler(mockResponse);
 
         var cachingHandler = new HybridCacheHttpHandler(handler, hybridCache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         using var client = new HttpClient(cachingHandler);
@@ -89,11 +92,12 @@ public class IntegrationTests
         var hybridCache = serviceProvider.GetRequiredService<HybridCache>();
         var timeProvider = new FakeTimeProvider();
 
-        var handler = new TestHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        var mockResponse = new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("Multi-tier content"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("Multi-tier content")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var handler = new TestHandler(mockResponse);
 
         var cachingHandler = new HybridCacheHttpHandler(handler, hybridCache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         using var client = new HttpClient(cachingHandler);
@@ -124,11 +128,12 @@ public class IntegrationTests
             CacheKeyGenerator = request => $"custom:{request.RequestUri}"
         };
 
-        var handler = new TestHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        var mockResponse = new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("Custom key response"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("Custom key response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var handler = new TestHandler(mockResponse);
 
         var cachingHandler = new HybridCacheHttpHandler(handler, hybridCache, timeProvider, options, NullLogger<HybridCacheHttpHandler>.Instance);
         using var client = new HttpClient(cachingHandler);
@@ -158,11 +163,12 @@ public class IntegrationTests
             MaxCacheableContentSize = 40 // Very small limit (first response is 42 bytes)
         };
 
-        var handler = new TestHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        var mockResponse = new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("This content is way too large to be cached"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("This content is way too large to be cached")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var handler = new TestHandler(mockResponse);
 
         var cachingHandler = new HybridCacheHttpHandler(handler, hybridCache, timeProvider, options, NullLogger<HybridCacheHttpHandler>.Instance);
         using var client = new HttpClient(cachingHandler);
@@ -172,11 +178,12 @@ public class IntegrationTests
         handler.RequestCount.ShouldBe(1);
 
         // Second request should NOT be cached due to size limit
-        handler.SetResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        var newResponse = new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("New response"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("New response")
+        };
+        newResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        handler.SetResponse(newResponse);
 
         var response2 = await client.GetAsync(TestUrl, _ct);
         (await response2.Content.ReadAsStringAsync(_ct)).ShouldBe("New response");
@@ -198,15 +205,13 @@ public class IntegrationTests
             VaryHeaders = ["X-Custom-Header"]
         };
 
-        var handler = new TestHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        var mockResponse = new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("Vary response"),
-            Headers =
-            {
-                { "Cache-Control", "max-age=3600" },
-                { "Vary", "X-Custom-Header" }
-            }
-        });
+            Content = new StringContent("Vary response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        mockResponse.Headers.Vary.Add("X-Custom-Header");
+        var handler = new TestHandler(mockResponse);
 
         var cachingHandler = new HybridCacheHttpHandler(handler, hybridCache, timeProvider, options, NullLogger<HybridCacheHttpHandler>.Instance);
         using var client = new HttpClient(cachingHandler);

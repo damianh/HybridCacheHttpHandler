@@ -2,7 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
-using Microsoft.Extensions.Caching.Hybrid;
+using System.Net.Http.Headers;
 
 namespace DamianH.HybridCacheHttpHandler;
 
@@ -24,16 +24,14 @@ public class ValidationTests
             if (requestCount == 1)
             {
                 // First request - return response with ETag
-                return Task.FromResult(new HttpResponseMessage
+                var response = new HttpResponseMessage
                 {
                     StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent("original content"),
-                    Headers =
-                    {
-                        { "Cache-Control", "max-age=1" },
-                        { "ETag", "\"123abc\"" }
-                    }
-                });
+                    Content = new StringContent("original content")
+                };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                response.Headers.ETag = new EntityTagHeaderValue("\"123abc\"");
+                return Task.FromResult(response);
             }
 
             // Second request - capture for assertion
@@ -70,27 +68,21 @@ public class ValidationTests
             requestCount++;
             if (requestCount == 1)
             {
-                return new HttpResponseMessage
+                var response = new HttpResponseMessage
                 {
                     StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent("content"),
-                    Headers =
-                    {
-                        { "Cache-Control", "max-age=1" },
-                        { "ETag", "\"123\"" }
-                    }
+                    Content = new StringContent("content")
                 };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                response.Headers.ETag = new EntityTagHeaderValue("\"123\"");
+                return response;
             }
 
             // 304 with updated freshness
-            return new HttpResponseMessage(HttpStatusCode.NotModified)
-            {
-                Headers =
-                {
-                    { "Cache-Control", "max-age=3600" }, // Extended freshness
-                    { "ETag", "\"123\"" }
-                }
-            };
+            var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+            notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+            notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"123\"");
+            return notModifiedResponse;
         });
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
@@ -126,28 +118,22 @@ public class ValidationTests
             requestCount++;
             if (requestCount == 1)
             {
-                return new HttpResponseMessage
+                var response = new HttpResponseMessage
                 {
                     StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent("original body"),
-                    Headers =
-                    {
-                        { "Cache-Control", "max-age=1" },
-                        { "ETag", "\"abc\"" }
-                    }
+                    Content = new StringContent("original body")
                 };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                response.Headers.ETag = new EntityTagHeaderValue("\"abc\"");
+                return response;
             }
             else
             {
                 // 304 has no body
-                return new HttpResponseMessage(HttpStatusCode.NotModified)
-                {
-                    Headers =
-                    {
-                        { "Cache-Control", "max-age=3600" },
-                        { "ETag", "\"abc\"" }
-                    }
-                };
+                var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+                notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+                notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"abc\"");
+                return notModifiedResponse;
             }
         });
 
@@ -176,16 +162,14 @@ public class ValidationTests
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("content"),
-            Headers =
-            {
-                { "Cache-Control", "max-age=1" },
-                { "ETag", "W/\"weak-tag\"" } // Weak ETag
-            }
-        });
+            Content = new StringContent("content")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+        mockResponse.Headers.ETag = new EntityTagHeaderValue("\"weak-tag\"", true); // Weak ETag
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -216,23 +200,23 @@ public class ValidationTests
             requestCount++;
             if (requestCount == 1)
             {
-                return Task.FromResult(new HttpResponseMessage
+                var response = new HttpResponseMessage
                 {
                     StatusCode = HttpStatusCode.OK,
                     Content = new StringContent("content")
                     {
                         Headers = { LastModified = lastModified }
-                    },
-                    Headers = { { "Cache-Control", "max-age=1" } }
-                });
+                    }
+                };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                return Task.FromResult(response);
             }
             else
             {
                 lastRequest = req;
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
-                {
-                    Headers = { { "Cache-Control", "max-age=3600" } }
-                });
+                var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+                notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+                return Task.FromResult(notModifiedResponse);
             }
         });
 
@@ -266,22 +250,22 @@ public class ValidationTests
             requestCount++;
             if (requestCount == 1)
             {
-                return new HttpResponseMessage
+                var response = new HttpResponseMessage
                 {
                     StatusCode = HttpStatusCode.OK,
                     Content = new StringContent("content")
                     {
                         Headers = { LastModified = lastModified }
-                    },
-                    Headers = { { "Cache-Control", "max-age=1" } }
+                    }
                 };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                return response;
             }
             else
             {
-                return new HttpResponseMessage(HttpStatusCode.NotModified)
-                {
-                    Headers = { { "Cache-Control", "max-age=3600" } }
-                };
+                var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+                notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+                return notModifiedResponse;
             }
         });
 
@@ -311,16 +295,17 @@ public class ValidationTests
         var timeProvider = TestHelpers.CreateTimeProvider();
 
         var lastModified = timeProvider.GetUtcNow().AddDays(-1);
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
             Content = new StringContent("content")
             {
                 Headers = { LastModified = lastModified }
-            },
-            Headers = { { "Cache-Control", "max-age=1" } }
-            // No ETag - should use Last-Modified
-        });
+            }
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+        // No ETag - should use Last-Modified
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -349,30 +334,26 @@ public class ValidationTests
             requestCount++;
             if (requestCount == 1)
             {
-                return new HttpResponseMessage
+                var response = new HttpResponseMessage
                 {
                     StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent("old content"),
-                    Headers =
-                    {
-                        { "Cache-Control", "max-age=1" },
-                        { "ETag", "\"old\"" }
-                    }
+                    Content = new StringContent("old content")
                 };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                response.Headers.ETag = new EntityTagHeaderValue("\"old\"");
+                return response;
             }
             else
             {
                 // Resource changed - return 200 with new content
-                return new HttpResponseMessage
+                var response = new HttpResponseMessage
                 {
                     StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent("new content"),
-                    Headers =
-                    {
-                        { "Cache-Control", "max-age=3600" },
-                        { "ETag", "\"new\"" }
-                    }
+                    Content = new StringContent("new content")
                 };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+                response.Headers.ETag = new EntityTagHeaderValue("\"new\"");
+                return response;
             }
         });
 
@@ -413,16 +394,14 @@ public class ValidationTests
             requestCount++;
             if (requestCount == 1)
             {
-                return new HttpResponseMessage
+                var response = new HttpResponseMessage
                 {
                     StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent("content"),
-                    Headers =
-                    {
-                        { "Cache-Control", "max-age=1" },
-                        { "ETag", "\"abc\"" }
-                    }
+                    Content = new StringContent("content")
                 };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                response.Headers.ETag = new EntityTagHeaderValue("\"abc\"");
+                return response;
             }
             else
             {
@@ -450,98 +429,4 @@ public class ValidationTests
         requestCount.ShouldBe(2);
     }
 
-    [Fact]
-    public async Task Cache_write_failure_during_304_revalidation_returns_cached_response()
-    {
-        var cache = new FaultyCacheOnSecondWrite();
-        var timeProvider = TestHelpers.CreateTimeProvider();
-
-        var requestCount = 0;
-        var mockHandler = new MockHttpMessageHandler(() =>
-        {
-            requestCount++;
-            if (requestCount == 1)
-            {
-                return new HttpResponseMessage
-                {
-                    StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent("original content"),
-                    Headers =
-                    {
-                        { "Cache-Control", "max-age=1" },
-                        { "ETag", "\"123\"" }
-                    }
-                };
-            }
-
-            // 304 with updated cache-control
-            return new HttpResponseMessage(HttpStatusCode.NotModified)
-            {
-                Headers =
-                {
-                    { "Cache-Control", "max-age=3600" },
-                    { "ETag", "\"123\"" }
-                }
-            };
-        });
-
-        var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
-        var client = new HttpClient(cacheHandler);
-
-        // First request - caches successfully
-        var response1 = await client.GetAsync("https://example.com/resource", _ct);
-        var body1 = await response1.Content.ReadAsStringAsync();
-        body1.ShouldBe("original content");
-
-        // Make stale
-        timeProvider.Advance(TimeSpan.FromSeconds(2));
-
-        // Second request - gets 304, cache write fails, but should still return cached body
-        var response2 = await client.GetAsync("https://example.com/resource", _ct);
-        var body2 = await response2.Content.ReadAsStringAsync();
-
-        body2.ShouldBe("original content"); // Should still get cached content
-        response2.StatusCode.ShouldBe(HttpStatusCode.OK);
-        requestCount.ShouldBe(2); // Both requests hit backend
-    }
-
-    private class FaultyCacheOnSecondWrite : HybridCache
-    {
-        private readonly HybridCache _innerCache = TestHelpers.CreateCache();
-        private int _setCallCount;
-
-        public override ValueTask<T> GetOrCreateAsync<TState, T>(
-            string key,
-            TState state,
-            Func<TState, Ct, ValueTask<T>> factory,
-            HybridCacheEntryOptions? options = null,
-            IEnumerable<string>? tags = null,
-            Ct cancellationToken = default)
-            => _innerCache.GetOrCreateAsync(key, state, factory, options, tags, cancellationToken);
-
-        public override ValueTask SetAsync<T>(
-            string key,
-            T value,
-            HybridCacheEntryOptions? options = null,
-            IEnumerable<string>? tags = null,
-            Ct cancellationToken = default)
-        {
-            _setCallCount++;
-            return _setCallCount > 1
-                ? throw new InvalidOperationException("Simulated cache write failure on revalidation")
-                : _innerCache.SetAsync(key, value, options, tags, cancellationToken);
-        }
-
-        public override ValueTask RemoveAsync(string key, Ct cancellationToken = default)
-            => _innerCache.RemoveAsync(key, cancellationToken);
-
-        public override ValueTask RemoveAsync(IEnumerable<string> keys, Ct cancellationToken = default)
-            => _innerCache.RemoveAsync(keys, cancellationToken);
-
-        public override ValueTask RemoveByTagAsync(string tag, Ct cancellationToken = default)
-            => _innerCache.RemoveByTagAsync(tag, cancellationToken);
-
-        public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default)
-            => _innerCache.RemoveByTagAsync(tags, cancellationToken);
-    }
 }

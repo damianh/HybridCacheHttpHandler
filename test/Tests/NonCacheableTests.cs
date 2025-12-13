@@ -2,6 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
+using System.Net.Http.Headers;
 
 namespace DamianH.HybridCacheHttpHandler;
 
@@ -15,12 +16,13 @@ public class NonCacheableTests
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
 
@@ -39,12 +41,13 @@ public class NonCacheableTests
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
 
@@ -90,12 +93,13 @@ public class NonCacheableTests
         var mockHandler = new MockHttpMessageHandler(() =>
         {
             requestCount++;
-            return new HttpResponseMessage
+            var response = new HttpResponseMessage
             {
                 StatusCode = HttpStatusCode.OK,
-                Content = new StringContent($"response {requestCount}"),
-                Headers = { { "Cache-Control", "max-age=3600" } }
+                Content = new StringContent($"response {requestCount}")
             };
+            response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+            return response;
         });
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
@@ -119,12 +123,13 @@ public class NonCacheableTests
         var cache = TestHelpers.CreateCache();
         var timeProvider = TestHelpers.CreateTimeProvider();
 
-        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
         var cacheHandler = new HybridCacheHttpHandler(mockHandler, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client = new HttpClient(cacheHandler);
 
@@ -227,12 +232,13 @@ public class NonCacheableTests
         var timeProvider = TestHelpers.CreateTimeProvider();
 
         // Without public directive
-        var mockHandler1 = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse1 = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "max-age=3600" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse1.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler1 = new MockHttpMessageHandler(mockResponse1);
         var cacheHandler1 = new HybridCacheHttpHandler(mockHandler1, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client1 = new HttpClient(cacheHandler1);
 
@@ -247,12 +253,13 @@ public class NonCacheableTests
         mockHandler1.RequestCount.ShouldBe(2); // Not cached without public
 
         // With public directive
-        var mockHandler2 = new MockHttpMessageHandler(new HttpResponseMessage
+        var mockResponse2 = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent("response"),
-            Headers = { { "Cache-Control", "public, max-age=3600" } }
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse2.Headers.CacheControl = new CacheControlHeaderValue { Public = true, MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler2 = new MockHttpMessageHandler(mockResponse2);
         var cacheHandler2 = new HybridCacheHttpHandler(mockHandler2, cache, timeProvider, new HybridCacheHttpHandlerOptions(), NullLogger<HybridCacheHttpHandler>.Instance);
         var client2 = new HttpClient(cacheHandler2);
 
