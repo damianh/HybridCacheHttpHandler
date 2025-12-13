@@ -1,5 +1,12 @@
 # HybridCache HTTP Handler
 
+[![NuGet](https://img.shields.io/nuget/v/DamianH.HybridCacheHttpHandler.svg)](https://www.nuget.org/packages/DamianH.HybridCacheHttpHandler/)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/DamianH.HybridCacheHttpHandler.svg)](https://www.nuget.org/packages/DamianH.HybridCacheHttpHandler/)
+[![CI](https://github.com/damianh/HybridCacheHttpHandler/actions/workflows/ci.yml/badge.svg)](https://github.com/damianh/HybridCacheHttpHandler/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-LGPL%20v3-blue.svg)](LICENSE)
+[![.NET](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
+[![GitHub Stars](https://img.shields.io/github/stars/damianh/HybridCacheHttpHandler.svg)](https://github.com/damianh/HybridCacheHttpHandler/stargazers)
+
 A caching DelegatingHandler for HttpClient that provides client-side HTTP caching based on RFC 9111.
 
 ## Features
