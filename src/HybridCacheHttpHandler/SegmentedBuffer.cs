@@ -88,7 +88,7 @@ internal sealed class SegmentedBuffer : IDisposable
     /// <summary>
     /// Copies all data from segments to the destination stream.
     /// </summary>
-    public async Task CopyToAsync(Stream destination, CancellationToken cancellationToken)
+    public async Task CopyToAsync(Stream destination, Ct cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 

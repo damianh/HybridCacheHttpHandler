@@ -17,6 +17,7 @@ namespace DamianH.HybridCacheHttpHandler;
 public class HybridCacheHttpHandler : DelegatingHandler
 {
     private readonly HybridCache _cache;
+    private readonly ContentCache _contentCache;
     private readonly TimeProvider _timeProvider;
     private readonly HybridCacheHttpHandlerOptions _options;
     private readonly ILogger _logger;
@@ -38,6 +39,7 @@ public class HybridCacheHttpHandler : DelegatingHandler
         ILogger<HybridCacheHttpHandler> logger)
     {
         _cache = cache;
+        _contentCache = new ContentCache(cache, options.ContentKeyPrefix);
         _timeProvider = timeProvider;
         _options = options;
         _logger = logger;
@@ -60,6 +62,7 @@ public class HybridCacheHttpHandler : DelegatingHandler
         : base(innerHandler)
     {
         _cache = cache;
+        _contentCache = new ContentCache(cache, options.ContentKeyPrefix);
         _timeProvider = timeProvider;
         _options = options;
         _logger = logger;
@@ -98,17 +101,21 @@ public class HybridCacheHttpHandler : DelegatingHandler
         {
             var cacheKey = GenerateVaryAwareCacheKey(request);
 
-            var cachedEntry = await _cache.GetOrCreateAsync<CachedHttpResponse?>(
+            var cachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
                 cacheKey,
-                _ => ValueTask.FromResult<CachedHttpResponse?>(null),
+                _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
                 cancellationToken: ct
             );
 
             if (cachedEntry != null)
             {
-                var response = DeserializeResponse(cachedEntry);
-                AddDiagnosticHeaders(response, "HIT-ONLY-IF-CACHED", cachedEntry);
-                return response;
+                var response = await DeserializeResponseAsync(cachedEntry, ct);
+                if (response != null)
+                {
+                    AddDiagnosticHeaders(response, "HIT-ONLY-IF-CACHED", cachedEntry);
+                    return response;
+                }
+                // Content was missing, metadata cleaned up in DeserializeResponseAsync
             }
 
             // Return 504 Gateway Timeout if not in cache
@@ -134,7 +141,7 @@ public class HybridCacheHttpHandler : DelegatingHandler
         var cacheKey2 = GenerateVaryAwareCacheKey(request);
         HttpResponseMessage? uncachedResponse = null;
 
-        CachedHttpResponse? cachedResponse;
+        CachedHttpMetadata? cachedResponse;
         try
         {
             cachedResponse = await _cache.GetOrCreateAsync(
@@ -217,7 +224,13 @@ public class HybridCacheHttpHandler : DelegatingHandler
                     }
 
                     CacheHits.Add(1);
-                    var response = DeserializeResponse(updatedEntry);
+                    var response = await DeserializeResponseAsync(updatedEntry, ct);
+                    if (response == null)
+                    {
+                        // Content missing, return fresh response
+                        AddDiagnosticHeaders(uncachedResponse, "MISS-CACHE-ERROR");
+                        return uncachedResponse;
+                    }
                     AddDiagnosticHeaders(response, "HIT-REVALIDATED", updatedEntry);
                     return response;
                 }
@@ -232,7 +245,16 @@ public class HybridCacheHttpHandler : DelegatingHandler
             {
                 // Cache hit on fresh response
                 CacheHits.Add(1);
-                var response = DeserializeResponse(cachedResponse);
+                var response = await DeserializeResponseAsync(cachedResponse, ct);
+                if (response == null)
+                {
+                    // Content missing - treat as cache miss
+                    await _cache.RemoveAsync(cacheKey2, ct);
+                    var freshResponse = await base.SendAsync(request, ct);
+                    AddDiagnosticHeaders(freshResponse, "MISS-CACHE-ERROR");
+                    CacheMisses.Add(1);
+                    return freshResponse;
+                }
                 AddDiagnosticHeaders(response, "HIT-FRESH", cachedResponse);
                 return response;
             }
@@ -248,7 +270,16 @@ public class HybridCacheHttpHandler : DelegatingHandler
                 if (staleness <= cachedResponse.StaleWhileRevalidate.Value)
                 {
                     // Serve stale content immediately
-                    var staleResponse = DeserializeResponse(cachedResponse);
+                    var staleResponse = await DeserializeResponseAsync(cachedResponse, ct);
+                    if (staleResponse == null)
+                    {
+                        // Content missing - treat as cache miss
+                        await _cache.RemoveAsync(cacheKey2, ct);
+                        var freshResponse = await base.SendAsync(request, ct);
+                        AddDiagnosticHeaders(freshResponse, "MISS-CACHE-ERROR");
+                        CacheMisses.Add(1);
+                        return freshResponse;
+                    }
                     AddDiagnosticHeaders(staleResponse, "HIT-STALE-WHILE-REVALIDATE", cachedResponse);
 
                     // Trigger background revalidation
@@ -276,7 +307,13 @@ public class HybridCacheHttpHandler : DelegatingHandler
                 if (staleness <= cachedResponse.StaleIfError.Value)
                 {
                     CacheHits.Add(1); // Count as hit (stale-if-error)
-                    var response = DeserializeResponse(cachedResponse);
+                    var response = await DeserializeResponseAsync(cachedResponse, ct);
+                    if (response == null)
+                    {
+                        // Content missing - return error response
+                        AddDiagnosticHeaders(uncachedResponse, "MISS-CACHE-ERROR");
+                        return uncachedResponse;
+                    }
                     AddDiagnosticHeaders(response, "HIT-STALE-IF-ERROR", cachedResponse);
                     return response;
                 }
@@ -299,7 +336,13 @@ public class HybridCacheHttpHandler : DelegatingHandler
 
                 CacheHits.Add(1); // Count as hit (revalidated)
                 // Return cached body with updated metadata
-                var response = DeserializeResponse(updatedEntry);
+                var response = await DeserializeResponseAsync(updatedEntry, ct);
+                if (response == null)
+                {
+                    // Content missing - return fresh response
+                    AddDiagnosticHeaders(uncachedResponse, "MISS-CACHE-ERROR");
+                    return uncachedResponse;
+                }
                 AddDiagnosticHeaders(response, "HIT-REVALIDATED", updatedEntry);
                 return response;
             }
@@ -358,66 +401,51 @@ public class HybridCacheHttpHandler : DelegatingHandler
         return uncachedResponse;
     }
 
-    private CachedHttpResponse UpdateCachedEntry(CachedHttpResponse cached, HttpResponseMessage notModifiedResponse)
+    private CachedHttpMetadata UpdateCachedEntry(CachedHttpMetadata cached, HttpResponseMessage notModifiedResponse)
     {
         // Update metadata from 304 response while keeping the cached body
         var updatedMaxAge = notModifiedResponse.Headers.CacheControl?.MaxAge;
         var updatedExpires = notModifiedResponse.Content.Headers.Expires;
         var updatedDate = notModifiedResponse.Headers.Date;
 
+        // Extract Age from 304 response if present
         TimeSpan? updatedAge = null;
-        if (!notModifiedResponse.Headers.TryGetValues("Age", out var ageValues))
+        if (notModifiedResponse.Headers.TryGetValues("Age", out var ageValues))
         {
-            return new CachedHttpResponse
+            var ageValue = ageValues.FirstOrDefault();
+            if (ageValue != null && int.TryParse(ageValue, out var ageSeconds))
             {
-                StatusCode = cached.StatusCode, // Keep original status
-                Content = cached.Content, // Keep cached body
-                Headers = cached.Headers, // Keep original headers
-                ContentHeaders = cached.ContentHeaders, // Keep original content headers
-                CachedAt = _timeProvider.GetUtcNow(), // Update cache time
-                MaxAge = updatedMaxAge ?? cached.MaxAge, // Update if provided in 304
-                ETag = cached.ETag, // Keep original ETag
-                LastModified = cached.LastModified, // Keep original Last-Modified
-                Expires = updatedExpires ?? cached.Expires, // Update if provided
-                Date = updatedDate ?? cached.Date, // Update if provided
-                Age = updatedAge ?? TimeSpan.Zero, // Reset age after validation
-                VaryHeaders = cached.VaryHeaders, // Keep Vary headers
-                VaryHeaderValues = cached.VaryHeaderValues, // Keep Vary values
-                StaleWhileRevalidate = cached.StaleWhileRevalidate, // Keep stale-while-revalidate
-                StaleIfError = cached.StaleIfError, // Keep stale-if-error
-                MustRevalidate = cached.MustRevalidate // Keep must-revalidate
-            };
+                updatedAge = TimeSpan.FromSeconds(ageSeconds);
+            }
         }
 
-        var ageValue = ageValues.FirstOrDefault();
-        if (ageValue != null && int.TryParse(ageValue, out var ageSeconds))
+        // Return updated metadata, preserving content reference
+        return new CachedHttpMetadata
         {
-            updatedAge = TimeSpan.FromSeconds(ageSeconds);
-        }
-
-        return new CachedHttpResponse
-        {
-            StatusCode = cached.StatusCode, // Keep original status
-            Content = cached.Content, // Keep cached body
-            Headers = cached.Headers, // Keep original headers
-            ContentHeaders = cached.ContentHeaders, // Keep original content headers
-            CachedAt = _timeProvider.GetUtcNow(), // Update cache time
-            MaxAge = updatedMaxAge ?? cached.MaxAge, // Update if provided in 304
-            ETag = cached.ETag, // Keep original ETag
-            LastModified = cached.LastModified, // Keep original Last-Modified
-            Expires = updatedExpires ?? cached.Expires, // Update if provided
-            Date = updatedDate ?? cached.Date, // Update if provided
-            Age = updatedAge ?? TimeSpan.Zero, // Reset age after validation
-            VaryHeaders = cached.VaryHeaders, // Keep Vary headers
-            VaryHeaderValues = cached.VaryHeaderValues, // Keep Vary values
-            StaleWhileRevalidate = cached.StaleWhileRevalidate, // Keep stale-while-revalidate
-            StaleIfError = cached.StaleIfError, // Keep stale-if-error
-            MustRevalidate = cached.MustRevalidate // Keep must-revalidate
+            StatusCode = cached.StatusCode,
+            ContentKey = cached.ContentKey,
+            ContentLength = cached.ContentLength,
+            Headers = cached.Headers,
+            ContentHeaders = cached.ContentHeaders,
+            CachedAt = _timeProvider.GetUtcNow(),
+            MaxAge = updatedMaxAge ?? cached.MaxAge,
+            ETag = cached.ETag,
+            LastModified = cached.LastModified,
+            Expires = updatedExpires ?? cached.Expires,
+            Date = updatedDate ?? cached.Date,
+            Age = updatedAge ?? TimeSpan.Zero,
+            VaryHeaders = cached.VaryHeaders,
+            VaryHeaderValues = cached.VaryHeaderValues,
+            StaleWhileRevalidate = cached.StaleWhileRevalidate,
+            StaleIfError = cached.StaleIfError,
+            MustRevalidate = cached.MustRevalidate,
+            NoCache = cached.NoCache,
+            IsCompressed = cached.IsCompressed
         };
     }
 
     private async Task BackgroundRevalidateAsync(
-        CachedHttpResponse cachedResponse,
+        CachedHttpMetadata cachedResponse,
         HttpRequestMessage originalRequest,
         string cacheKey)
     {
@@ -485,7 +513,7 @@ public class HybridCacheHttpHandler : DelegatingHandler
 
     private static HttpRequestMessage CreateValidationRequest(
         HttpRequestMessage originalRequest,
-        CachedHttpResponse cachedResponse)
+        CachedHttpMetadata cachedResponse)
     {
         var request = new HttpRequestMessage(originalRequest.Method, originalRequest.RequestUri);
         foreach (var header in originalRequest.Headers)
@@ -537,7 +565,7 @@ public class HybridCacheHttpHandler : DelegatingHandler
         return $"{baseCacheKey}::{varyKeyPart}";
     }
 
-    private bool IsFresh(CachedHttpResponse cached, HttpRequestMessage request)
+    private bool IsFresh(CachedHttpMetadata cached, HttpRequestMessage request)
     {
         var freshnessLifetime = CalculateFreshnessLifetime(cached);
         if (freshnessLifetime == null)
@@ -562,7 +590,7 @@ public class HybridCacheHttpHandler : DelegatingHandler
         return currentAge < freshnessLifetime;
     }
 
-    private TimeSpan? CalculateFreshnessLifetime(CachedHttpResponse cached)
+    private TimeSpan? CalculateFreshnessLifetime(CachedHttpMetadata cached)
     {
         // RFC 7234 Section 4.2.1: max-age takes precedence
         if (cached.MaxAge.HasValue && cached.MaxAge.Value > TimeSpan.Zero)
@@ -592,7 +620,7 @@ public class HybridCacheHttpHandler : DelegatingHandler
         return null;
     }
 
-    private TimeSpan CalculateCurrentAge(CachedHttpResponse cached)
+    private TimeSpan CalculateCurrentAge(CachedHttpMetadata cached)
     {
         // Age when received
         var ageValue = cached.Age ?? TimeSpan.Zero;
@@ -703,7 +731,7 @@ public class HybridCacheHttpHandler : DelegatingHandler
         return false;
     }
 
-    private async Task<CachedHttpResponse?> SerializeResponse(HttpResponseMessage response, HttpRequestMessage? request = null)
+    private async Task<CachedHttpMetadata?> SerializeResponse(HttpResponseMessage response, HttpRequestMessage? request = null)
     {
         // Check content length before reading if available
         if (_options.MaxCacheableContentSize.HasValue &&
@@ -846,51 +874,34 @@ public class HybridCacheHttpHandler : DelegatingHandler
         var noCache = response.Headers.CacheControl?.NoCache == true;
 
         // Parse Cache-Control extensions manually since HttpClient doesn't expose them
-        if (!response.Headers.TryGetValues("Cache-Control", out var cacheControlValues))
+        if (response.Headers.TryGetValues("Cache-Control", out var cacheControlValues))
         {
-            return new CachedHttpResponse
+            var cacheControlString = string.Join(", ", cacheControlValues);
+
+            // Extract stale-while-revalidate
+            var swrMatch = CacheControlRegexes.StaleWhileRevalidate().Match(cacheControlString);
+            if (swrMatch.Success && int.TryParse(swrMatch.Groups[1].Value, out var swrSeconds))
             {
-                StatusCode = (int)response.StatusCode,
-                Content = finalContent,
-                Headers = headers,
-                ContentHeaders = contentHeaders,
-                CachedAt = _timeProvider.GetUtcNow(),
-                MaxAge = maxAge,
-                ETag = etag,
-                LastModified = lastModified,
-                Expires = expires,
-                Date = date,
-                Age = age,
-                VaryHeaders = varyHeaders,
-                VaryHeaderValues = varyHeaderValues,
-                StaleWhileRevalidate = staleWhileRevalidate,
-                StaleIfError = staleIfError,
-                MustRevalidate = mustRevalidate,
-                NoCache = noCache,
-                IsCompressed = isCompressed
-            };
+                staleWhileRevalidate = TimeSpan.FromSeconds(swrSeconds);
+            }
+
+            // Extract stale-if-error
+            var sieMatch = CacheControlRegexes.StaleIfError().Match(cacheControlString);
+            if (sieMatch.Success && int.TryParse(sieMatch.Groups[1].Value, out var sieSeconds))
+            {
+                staleIfError = TimeSpan.FromSeconds(sieSeconds);
+            }
         }
 
-        var cacheControlString = string.Join(", ", cacheControlValues);
+        // Store content separately (always, to avoid Base64 encoding)
+        // Store content first (write order: content before metadata for atomicity)
+        var contentKey = await _contentCache.StoreContentAsync(finalContent, Ct.None);
 
-        // Extract stale-while-revalidate
-        var swrMatch = CacheControlRegexes.StaleWhileRevalidate().Match(cacheControlString);
-        if (swrMatch.Success && int.TryParse(swrMatch.Groups[1].Value, out var swrSeconds))
-        {
-            staleWhileRevalidate = TimeSpan.FromSeconds(swrSeconds);
-        }
-
-        // Extract stale-if-error
-        var sieMatch = CacheControlRegexes.StaleIfError().Match(cacheControlString);
-        if (sieMatch.Success && int.TryParse(sieMatch.Groups[1].Value, out var sieSeconds))
-        {
-            staleIfError = TimeSpan.FromSeconds(sieSeconds);
-        }
-
-        return new CachedHttpResponse
+        return new CachedHttpMetadata
         {
             StatusCode = (int)response.StatusCode,
-            Content = finalContent,
+            ContentKey = contentKey,
+            ContentLength = finalContent.Length,
             Headers = headers,
             ContentHeaders = contentHeaders,
             CachedAt = _timeProvider.GetUtcNow(),
@@ -910,27 +921,38 @@ public class HybridCacheHttpHandler : DelegatingHandler
         };
     }
 
-    private static HttpResponseMessage DeserializeResponse(CachedHttpResponse cached)
+    private async Task<HttpResponseMessage?> DeserializeResponseAsync(CachedHttpMetadata metadata, Ct cancellationToken)
     {
-        var content = cached.Content;
-
-        // Decompress if needed
-        if (cached.IsCompressed)
+        // Get content from separate storage
+        var retrievedContent = await _contentCache.GetContentAsync(metadata.ContentKey, cancellationToken);
+        if (retrievedContent == null)
         {
-            content = DecompressContent(content.ToArray());
+            // Content missing - metadata is orphaned
+            _logger.LogWarning(
+                "Cached content missing for key {ContentKey}, metadata is orphaned",
+                metadata.ContentKey);
+            return null;
         }
 
-        var response = new HttpResponseMessage((HttpStatusCode)cached.StatusCode)
+        var content = retrievedContent;
+
+        // Decompress if needed
+        if (metadata.IsCompressed)
+        {
+            content = DecompressContent(content);
+        }
+
+        var response = new HttpResponseMessage((HttpStatusCode)metadata.StatusCode)
         {
             Content = new ReadOnlyMemoryContent(content)
         };
 
-        foreach (var header in cached.Headers)
+        foreach (var header in metadata.Headers)
         {
             response.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        foreach (var header in cached.ContentHeaders)
+        foreach (var header in metadata.ContentHeaders)
         {
             response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
@@ -972,7 +994,7 @@ public class HybridCacheHttpHandler : DelegatingHandler
         return outputStream.ToArray();
     }
 
-    private void AddDiagnosticHeaders(HttpResponseMessage response, string reason, CachedHttpResponse? cachedResponse = null)
+    private void AddDiagnosticHeaders(HttpResponseMessage response, string reason, CachedHttpMetadata? cachedResponse = null)
     {
         if (!_options.IncludeDiagnosticHeaders)
         {

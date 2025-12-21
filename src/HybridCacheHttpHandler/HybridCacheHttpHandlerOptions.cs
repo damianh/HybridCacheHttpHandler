@@ -66,4 +66,11 @@ public class HybridCacheHttpHandlerOptions
     /// Default is false.
     /// </summary>
     public bool IncludeDiagnosticHeaders { get; init; }
+
+    /// <summary>
+    /// Prefix for content cache keys.
+    /// Default is "httpcache:content:".
+    /// Content is always stored separately from metadata to avoid Base64 encoding overhead.
+    /// </summary>
+    public string ContentKeyPrefix { get; init; } = "httpcache:content:";
 }

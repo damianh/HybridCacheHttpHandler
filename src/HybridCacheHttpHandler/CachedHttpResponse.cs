@@ -3,10 +3,20 @@
 
 namespace DamianH.HybridCacheHttpHandler;
 
-internal sealed class CachedHttpResponse
+/// <summary>
+/// Cached HTTP response metadata without the content body.
+/// Content is stored separately to avoid Base64 encoding overhead in distributed cache.
+/// </summary>
+internal sealed class CachedHttpMetadata
 {
     public required int StatusCode { get; init; }
-    public required ReadOnlyMemory<byte> Content { get; init; }
+    /// <summary>
+    /// Reference key for content stored separately.
+    /// Format: "httpcache:content:{hash}"
+    /// Content is always stored separately as raw bytes to avoid Base64 encoding overhead.
+    /// </summary>
+    public required string ContentKey { get; init; }
+    public required long ContentLength { get; init; }
     public required Dictionary<string, string[]> Headers { get; init; }
     public required Dictionary<string, string[]> ContentHeaders { get; init; }
     public required DateTimeOffset CachedAt { get; init; }
