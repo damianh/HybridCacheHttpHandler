@@ -1,7 +1,6 @@
 // Copyright Damian Hickey
 
 using BenchmarkDotNet.Attributes;
-using BenchmarkDotNet.Jobs;
 using DamianH.HybridCacheHttpHandler;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,7 +14,6 @@ namespace Benchmarks;
 /// with content/metadata separation architecture.
 /// </summary>
 [MemoryDiagnoser]
-[SimpleJob(RuntimeMoniker.NativeAot10_0)]
 public class MemoryAllocationBenchmarks
 {
     private HttpClient _cachedClient = null!;
@@ -87,9 +85,7 @@ public class MemoryAllocationBenchmarks
 
     [GlobalCleanup]
     public void Cleanup()
-    {
-        _cachedClient.Dispose();
-    }
+        => _cachedClient.Dispose();
 
     private class FakeHttpMessageHandler : HttpMessageHandler
     {

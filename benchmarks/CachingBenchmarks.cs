@@ -1,7 +1,6 @@
 // Copyright Damian Hickey
 
 using BenchmarkDotNet.Attributes;
-using BenchmarkDotNet.Jobs;
 using DamianH.HybridCacheHttpHandler;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,7 +10,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Benchmarks;
 
 [MemoryDiagnoser]
-[SimpleJob(RuntimeMoniker.NativeAot10_0)]
 public class CachingBenchmarks
 {
     private HttpClient _cachedClient = null!;

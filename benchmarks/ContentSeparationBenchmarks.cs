@@ -1,7 +1,6 @@
 // Copyright Damian Hickey
 
 using BenchmarkDotNet.Attributes;
-using BenchmarkDotNet.Jobs;
 using DamianH.HybridCacheHttpHandler;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,7 +14,6 @@ namespace Benchmarks;
 /// focusing on the overhead of two cache lookups vs memory efficiency.
 /// </summary>
 [MemoryDiagnoser]
-[SimpleJob(RuntimeMoniker.NativeAot10_0)]
 public class ContentSeparationBenchmarks
 {
     private HttpClient _cachedClient = null!;
@@ -112,9 +110,7 @@ public class ContentSeparationBenchmarks
 
     [GlobalCleanup]
     public void Cleanup()
-    {
-        _cachedClient.Dispose();
-    }
+        => _cachedClient.Dispose();
 
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
