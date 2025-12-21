@@ -7,21 +7,23 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Logging;
+using ZiggyCreatures.Caching.Fusion;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Add HybridCache
-builder.Services.AddHybridCache();
+builder.Services.AddFusionCache()
+    .WithDefaultEntryOptions(opt =>
+    {
+        opt.Duration = TimeSpan.FromMinutes(5);
+    })
+    .WithSystemTextJsonSerializer()
+    .AsHybridCache();
 
-// Configure HttpClient with caching handler
 builder.Services
     .AddHttpClient("CachedClient")
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
-        // Enable automatic decompression - server compression handled transparently
         AutomaticDecompression = DecompressionMethods.All,
-        
-        // Connection pooling
         PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2)
     })
@@ -31,22 +33,17 @@ builder.Services
         new HybridCacheHttpHandlerOptions
         {
             DefaultCacheDuration = TimeSpan.FromMinutes(5),
-            MaxCacheableContentSize = 10 * 1024 * 1024, // 10MB
-            CompressionThreshold = 1024 // Compress cached content >1KB
+            MaxCacheableContentSize = 10 * 1024 * 1024,
+            CompressionThreshold = 1024
         },
         sp.GetRequiredService<ILogger<HybridCacheHttpHandler>>()
     ));
 
 var host = builder.Build();
 
-// Get the HttpClient from the factory
 var httpClientFactory = host.Services.GetRequiredService<IHttpClientFactory>();
 var client = httpClientFactory.CreateClient("CachedClient");
 
-Console.WriteLine("HttpClient with Caching Handler Demo");
-Console.WriteLine("=====================================\n");
-
-// Make multiple requests to demonstrate caching
 var url = "https://httpbin.org/cache/60"; // Cache for 60 seconds
 
 Console.WriteLine($"Request 1: GET {url}");
@@ -69,7 +66,3 @@ var response3 = await client.GetAsync(url);
 sw.Stop();
 Console.WriteLine($"Status: {response3.StatusCode}, Time: {sw.ElapsedMilliseconds}ms");
 Console.WriteLine($"Age header: {response3.Headers.Age?.TotalSeconds ?? 0}s\n");
-
-Console.WriteLine("Notice how requests 2 and 3 are much faster due to caching!");
-Console.WriteLine("\nPress any key to exit...");
-Console.ReadKey();

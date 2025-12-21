@@ -897,6 +897,13 @@ public class HybridCacheHttpHandler : DelegatingHandler
         // Store content first (write order: content before metadata for atomicity)
         var contentKey = await _contentCache.StoreContentAsync(finalContent, Ct.None);
 
+        // Restore response content so caller can use it (content was consumed during read)
+        response.Content = new ByteArrayContent(finalContent);
+        foreach (var header in originalContentHeaders)
+        {
+            response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
         return new CachedHttpMetadata
         {
             StatusCode = (int)response.StatusCode,

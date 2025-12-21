@@ -545,6 +545,7 @@ See the `/samples` directory for complete examples:
 
 - `HttpClientFactorySample`: Integration with IHttpClientFactory
 - `YarpCachingProxySample`: Building a caching reverse proxy with YARP
+- `FusionCacheSample`: Using FusionCache via its HybridCache adapter for enhanced caching features
 
 ## Performance & Memory
 

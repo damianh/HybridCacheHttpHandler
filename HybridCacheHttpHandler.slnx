@@ -10,6 +10,7 @@
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/HttpClientFactorySample/HttpClientFactorySample.csproj" />
+    <Project Path="samples/FusionCacheSample/FusionCacheSample.csproj" />
     <Project Path="samples/YarpCachingProxySample/YarpCachingProxySample.csproj" />
   </Folder>
 </Solution>
