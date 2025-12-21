@@ -9,6 +9,27 @@
 
 A caching DelegatingHandler for HttpClient that provides client-side HTTP caching based on RFC 9111.
 
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Handler Pipeline Configuration](#handler-pipeline-configuration)
+  - [Recommended Setup](#recommended-setup)
+  - [Why SocketsHttpHandler?](#why-socketshttphandler)
+  - [AutomaticDecompression Explained](#automaticdecompression-explained)
+  - [Handler Ordering](#handler-ordering)
+  - [Common Mistakes](#common-mistakes)
+- [Configuration Options](#configuration-options)
+- [Cache Behavior](#cache-behavior)
+- [Performance & Memory](#performance--memory)
+- [Metrics](#metrics)
+- [Benchmarks](#benchmarks)
+- [Samples](#samples)
+- [Requirements](#requirements)
+- [License](#license)
+- [Contributing](#contributing)
+
 ## Features
 
 ### Core Caching Capabilities
@@ -54,14 +75,38 @@ dotnet add package HybridCacheHttpHandler
 
 ## Quick Start
 
-### Basic Usage
+### Basic Usage with Recommended Configuration
 
 ```csharp
 var services = new ServiceCollection();
 services.AddHybridCache();
+
 services.AddHttpClient("MyClient")
-    .AddHttpMessageHandler(sp => new CachingHttpHandler(
-        sp.GetRequiredService<HybridCache>()));
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        // Enable automatic decompression - server compression handled transparently
+        AutomaticDecompression = DecompressionMethods.All,
+        
+        // DNS refresh every 5 minutes - critical for cloud/microservices
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        
+        // Close idle connections after 2 minutes
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+        
+        // Reasonable connection timeout
+        ConnectTimeout = TimeSpan.FromSeconds(10)
+    })
+    .AddHttpMessageHandler(sp => new HybridCacheHttpHandler(
+        sp.GetRequiredService<HybridCache>(),
+        TimeProvider.System,
+        new HybridCacheHttpHandlerOptions
+        {
+            DefaultCacheDuration = TimeSpan.FromMinutes(5),
+            MaxCacheableContentSize = 10 * 1024 * 1024, // 10MB
+            CompressionThreshold = 1024 // Compress cached content >1KB
+        },
+        sp.GetRequiredService<ILogger<HybridCacheHttpHandler>>()
+    ));
 
 var client = services.BuildServiceProvider()
     .GetRequiredService<IHttpClientFactory>()
@@ -70,19 +115,150 @@ var client = services.BuildServiceProvider()
 var response = await client.GetAsync("https://api.example.com/data");
 ```
 
-### With Configuration
+## Handler Pipeline Configuration
+
+### Recommended Setup
+
+**Always use `SocketsHttpHandler` with `AutomaticDecompression` enabled:**
 
 ```csharp
-services.AddHttpClient("MyClient")
-    .AddHttpMessageHandler(sp => new CachingHttpHandler(
-        sp.GetRequiredService<HybridCache>(),
-        sp.GetRequiredService<TimeProvider>(),
-        new CachingHttpHandlerOptions
-        {
-            DefaultExpiration = TimeSpan.FromMinutes(5),
-            MaxContentSize = 10 * 1024 * 1024 // 10 MB
-        }));
+.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.All,
+    PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2)
+})
 ```
+
+### Why SocketsHttpHandler?
+
+`SocketsHttpHandler` is the modern, high-performance HTTP handler. `HttpClientHandler` is legacy.
+
+| Feature | SocketsHttpHandler | HttpClientHandler |
+|---------|-------------------|-------------------|
+| **Performance** | ✅ Higher throughput, lower latency | ⚠️ Slower |
+| **DNS Refresh** | ✅ Built-in (`PooledConnectionLifetime`) | ❌ Manual workarounds |
+| **Connection Pooling** | ✅ Advanced, configurable | ⚠️ Basic |
+| **Cross-platform** | ✅ Consistent behavior | ❌ Varies by OS |
+| **.NET 5+** | ✅ Recommended | ⚠️ Legacy wrapper |
+
+**Critical for SOA/Microservices:**
+- **DNS Refresh**: Services scale, IPs change. Without refresh, connections stick to old/dead instances.
+- **Performance**: ~40% higher throughput vs HttpClientHandler
+- **Reliability**: Better connection pool management prevents port exhaustion
+
+### AutomaticDecompression Explained
+
+**Two different compressions:**
+
+1. **Transport Compression** (Server → Client)
+   - Controlled by: `AutomaticDecompression` on `SocketsHttpHandler`
+   - Purpose: Reduce network bandwidth
+   - Result: Handler receives **decompressed** content
+
+2. **Cache Storage Compression** (Our Library)
+   - Controlled by: `CompressionThreshold` in options
+   - Purpose: Reduce cache storage size
+   - Result: Content compressed before storing in cache
+
+**Example Flow:**
+```
+Server sends: gzipped 512 bytes
+    ↓
+SocketsHttpHandler: auto-decompresses → 2048 bytes
+    ↓
+HybridCacheHttpHandler: receives decompressed content
+    ↓
+Our compression: compresses → 600 bytes
+    ↓
+Cache: stores 600 bytes (no Base64 overhead!)
+```
+
+**Why this matters:**
+- ✅ Cache handler can inspect/validate response content
+- ✅ Cache-Control, ETag, Last-Modified headers readable
+- ✅ Intelligent caching decisions possible
+- ✅ Our compression is optional and controlled
+
+### Handler Ordering
+
+**Pipeline structure:**
+```
+HttpClient → [Outer Handlers] → HybridCacheHttpHandler → SocketsHttpHandler → Network
+```
+
+#### With Polly Resilience (Recommended for Production)
+
+```csharp
+.AddHttpMessageHandler(sp => new HybridCacheHttpHandler(...))
+.AddStandardResilienceHandler(options =>
+{
+    options.Retry.MaxRetryAttempts = 3;
+    options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
+});
+```
+
+**Order:** Polly (outer) → Cache → SocketsHttpHandler
+
+**Why:** Cache hit = fast path, Polly never invoked. Cache miss + network failure = Polly retries.
+
+#### With Authentication
+
+```csharp
+.AddHttpMessageHandler(() => new AuthenticationHandler())
+.AddHttpMessageHandler(sp => new HybridCacheHttpHandler(
+    sp.GetRequiredService<HybridCache>(),
+    TimeProvider.System,
+    new HybridCacheHttpHandlerOptions
+    {
+        // Include auth headers in cache key
+        VaryHeaders = new[] { "Authorization", "Accept", "Accept-Encoding" }
+    },
+    sp.GetRequiredService<ILogger<HybridCacheHttpHandler>>()
+));
+```
+
+Auth applied before caching, headers included in cache key via Vary.
+
+### Common Mistakes
+
+❌ **Wrong: Not enabling AutomaticDecompression**
+```csharp
+new SocketsHttpHandler()  // Defaults to None!
+```
+**Problem:** Cache handler receives compressed content, can't inspect properly.
+
+✅ **Correct: Explicitly enable decompression**
+```csharp
+new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.All
+}
+```
+
+❌ **Wrong: Using legacy HttpClientHandler**
+```csharp
+new HttpClientHandler()  // Legacy, less efficient
+```
+
+✅ **Correct: Use modern SocketsHttpHandler**
+```csharp
+new SocketsHttpHandler { /* ... */ }
+```
+
+❌ **Wrong: Cache handler after Polly**
+```csharp
+.AddStandardResilienceHandler()  // Outer
+.AddHttpMessageHandler(sp => new HybridCacheHttpHandler(...))  // Inner - Wrong!
+```
+
+✅ **Correct: Cache handler before Polly**
+```csharp
+.AddHttpMessageHandler(sp => new HybridCacheHttpHandler(...))  // Inner - Correct!
+.AddStandardResilienceHandler()  // Outer
+```
+
+**Golden Rule:** `HybridCacheHttpHandler` should receive **decompressed, ready-to-use** content.
 
 ## Configuration Options
 
@@ -189,31 +365,65 @@ Contributions are welcome. Please ensure tests pass before submitting pull reque
 dotnet run --project test/Tests/Tests.csproj
 ```
 
-## Performance Optimizations
+## Performance & Memory
 
 The handler is designed for high-performance scenarios with several key optimizations:
 
+### Content/Metadata Separation Architecture
+
+**Eliminates Base64 overhead in distributed cache:**
+
+- **Metadata** (small, ~1-2KB): Status code, headers, timestamps → Stored as JSON
+- **Content** (large, variable): Response body → **Stored as raw `byte[]`**
+  - ✅ **No Base64 encoding** = 33% size savings
+  - ✅ Content deduplication via SHA256 hash
+  - ✅ Same content shared across cache entries (different Vary headers)
+
+**Trade-offs:**
+- Two cache lookups (metadata + content) vs one lookup
+- Acceptable: L1 (memory) cache makes second lookup very fast (~microseconds)
+- Benefit: Zero Base64 overhead on all cached content
+
 ### Memory Efficiency
-- **ArrayPool Usage**: Byte arrays are rented from `ArrayPool<byte>` and returned after use, reducing GC pressure and avoiding Large Object Heap allocations for responses over 85KB
-- **Segmented Buffers**: Large responses are stored in 8KB segments to avoid LOH fragmentation
-- **Compression**: Optional GZip compression for cached content reduces memory footprint and cache storage costs
+
+- **SegmentedBuffer**: Large responses read in 80KB segments (below 85KB LOH threshold)
+- **Compression**: Optional GZip compression for cached content
   - Configurable threshold (default: 1KB)
-  - Only compresses compressible content types (text, JSON, XML, etc.)
-  - Transparent compression/decompression on cache read/write
-  - Can be disabled or customized per content type
-- **Zero-Copy Streaming**: Cached responses are streamed directly to consumers without intermediate buffering
-- **Minimal Allocations**: Uses `Memory<byte>` and `Span<byte>` to avoid unnecessary array allocations during serialization
-- **Source-Generated Regex**: Compile-time regex generation for zero-overhead pattern matching
-- **Source-Generated Logging**: Compile-time logging code generation for improved performance
+  - Only compresses compressible content types (text, JSON, XML)
+  - Reduces memory footprint and cache storage costs
+- **ArrayPool Usage**: Byte arrays rented from `ArrayPool<byte>` during read operations
+- **Zero-Copy Streaming**: Cached responses streamed directly without intermediate buffering
+- **Source-Generated Regex & Logging**: Compile-time generation for zero runtime overhead
+
+**LOH Considerations:**
+- Content >85KB will hit Large Object Heap (expected and acceptable)
+- Most API responses <85KB avoid LOH
+- Compression helps reduce LOH pressure for compressible content
+- Trade-off: Reliability (caching large responses) > LOH cost
 
 ### Request Collapsing
-- **Stampede Prevention**: Multiple concurrent requests for the same resource are collapsed into a single backend request using `HybridCache.GetOrCreateAsync`
-- **Automatic Deduplication**: Only one request hits the backend while others await the cached result
+
+- **Stampede Prevention**: Multiple concurrent requests for same resource collapsed into single backend request
+- **Automatic Deduplication**: Only one request hits backend while others await cached result
+- Uses `HybridCache.GetOrCreateAsync` for built-in request coalescing
 
 ### Efficient Caching
-- **L1/L2 Strategy**: HybridCache provides fast in-memory (L1) caching with optional distributed (L2) caching for multi-instance scenarios
-- **Size Limits**: Configurable per-item size limits prevent caching oversized responses that could impact memory
-- **Conditional Requests**: ETags and Last-Modified headers enable efficient 304 Not Modified responses from origin servers
+
+- **L1/L2 Strategy**: Fast in-memory (L1) + optional distributed (L2) via HybridCache
+- **Size Limits**: Configurable per-item limits (default: 10MB) prevent memory issues
+- **Conditional Requests**: ETags and Last-Modified enable efficient 304 responses
+
+### Benchmark Results
+
+See `/benchmarks` for comprehensive memory allocation benchmarks:
+
+| Response Size | Allocations | Gen2 (LOH) | Notes |
+|---------------|-------------|------------|-------|
+| 1-10KB | ~10-20 KB | 0 | No LOH, optimal |
+| 10-85KB | ~20-100 KB | 0 | No LOH, good |
+| >85KB | ~100KB+ | >0 | LOH expected, acceptable for reliability |
+
+Run benchmarks: `cd benchmarks && .\run-memory-tests.ps1`
 
 ## Benchmarks
 
