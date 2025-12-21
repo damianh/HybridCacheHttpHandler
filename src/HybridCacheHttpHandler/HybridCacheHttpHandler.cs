@@ -21,7 +21,9 @@ public class HybridCacheHttpHandler : DelegatingHandler
     private readonly TimeProvider _timeProvider;
     private readonly HybridCacheHttpHandlerOptions _options;
     private readonly ILogger _logger;
-    private static readonly Meter Meter = new("HybridCacheHttpHandler", "1.0.0");
+    private static readonly Meter Meter = new(
+        nameof(HybridCacheHttpHandler),
+        typeof(HybridCacheHttpHandler).Assembly.GetName().Version?.ToString() ?? "1.0.0");
     private static readonly Counter<long> CacheHits = Meter.CreateCounter<long>("cache.hits", description: "Number of cache hits");
     private static readonly Counter<long> CacheMisses = Meter.CreateCounter<long>("cache.misses", description: "Number of cache misses");
 
