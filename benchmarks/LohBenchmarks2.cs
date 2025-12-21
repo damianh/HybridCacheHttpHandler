@@ -14,7 +14,7 @@ namespace Benchmarks;
 /// Tests responses around and above the 85KB LOH threshold.
 /// </summary>
 [MemoryDiagnoser]
-public class LohBenchmarks
+public class LohBenchmarks2
 {
     private HttpClient _cachedClientWithCompression = null!;
     private HttpClient _cachedClientWithoutCompression = null!;
