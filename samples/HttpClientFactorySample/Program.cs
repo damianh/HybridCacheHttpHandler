@@ -15,14 +15,23 @@ builder.Services.AddHybridCache();
 // Configure HttpClient with caching handler
 builder.Services
     .AddHttpClient("CachedClient")
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler())
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        // Enable automatic decompression - server compression handled transparently
+        AutomaticDecompression = DecompressionMethods.All,
+        
+        // Connection pooling
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2)
+    })
     .AddHttpMessageHandler(sp => new HybridCacheHttpHandler(
         sp.GetRequiredService<HybridCache>(),
         TimeProvider.System,
         new HybridCacheHttpHandlerOptions
         {
             DefaultCacheDuration = TimeSpan.FromMinutes(5),
-            MaxCacheableContentSize = 10 * 1024 * 1024 // 10MB
+            MaxCacheableContentSize = 10 * 1024 * 1024, // 10MB
+            CompressionThreshold = 1024 // Compress cached content >1KB
         },
         sp.GetRequiredService<ILogger<HybridCacheHttpHandler>>()
     ));
