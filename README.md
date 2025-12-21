@@ -9,6 +9,9 @@
 
 A caching DelegatingHandler for HttpClient that provides client-side HTTP caching based on RFC 9111.
 
+> [!NOTE]  
+> Project is under development and is not yet production-ready.
+
 ## Table of Contents
 
 - [Features](#features)
@@ -16,10 +19,10 @@ A caching DelegatingHandler for HttpClient that provides client-side HTTP cachin
 - [Quick Start](#quick-start)
 - [Handler Pipeline Configuration](#handler-pipeline-configuration)
   - [Recommended Setup](#recommended-setup)
-  - [Why SocketsHttpHandler?](#why-socketshttphandler)
   - [AutomaticDecompression Explained](#automaticdecompression-explained)
   - [Handler Ordering](#handler-ordering)
   - [Common Mistakes](#common-mistakes)
+- [Multiple HybridCache Instances](#multiple-hybridcache-instances)
 - [Configuration Options](#configuration-options)
 - [Cache Behavior](#cache-behavior)
 - [Performance & Memory](#performance--memory)
@@ -65,7 +68,7 @@ A caching DelegatingHandler for HttpClient that provides client-side HTTP cachin
 - **Configurable Limits**: Per-item content size limits (default 10MB)
 - **Metrics**: Built-in metrics via `System.Diagnostics.Metrics` for hit/miss rates and cache operations
 - **Custom Cache Keys**: Extensible cache key generation for advanced scenarios
-- **Request Collapsing**: Prevents cache stampede with automatic request coalescing
+- **Request Collapsing**: Prevents cache stampede via `HybridCache.GetOrCreateAsync` automatic request coalescing
 
 ## Installation
 
@@ -119,7 +122,7 @@ var response = await client.GetAsync("https://api.example.com/data");
 
 ### Recommended Setup
 
-**Always use `SocketsHttpHandler` with `AutomaticDecompression` enabled:**
+**Always use `SocketsHttpHandler` with `AutomaticDecompression` enabled** (better performance, DNS refresh, and connection pooling than legacy `HttpClientHandler`):
 
 ```csharp
 .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
@@ -130,23 +133,6 @@ var response = await client.GetAsync("https://api.example.com/data");
 })
 ```
 
-### Why SocketsHttpHandler?
-
-`SocketsHttpHandler` is the modern, high-performance HTTP handler. `HttpClientHandler` is legacy.
-
-| Feature | SocketsHttpHandler | HttpClientHandler |
-|---------|-------------------|-------------------|
-| **Performance** | ✅ Higher throughput, lower latency | ⚠️ Slower |
-| **DNS Refresh** | ✅ Built-in (`PooledConnectionLifetime`) | ❌ Manual workarounds |
-| **Connection Pooling** | ✅ Advanced, configurable | ⚠️ Basic |
-| **Cross-platform** | ✅ Consistent behavior | ❌ Varies by OS |
-| **.NET 5+** | ✅ Recommended | ⚠️ Legacy wrapper |
-
-**Critical for SOA/Microservices:**
-- **DNS Refresh**: Services scale, IPs change. Without refresh, connections stick to old/dead instances.
-- **Performance**: ~40% higher throughput vs HttpClientHandler
-- **Reliability**: Better connection pool management prevents port exhaustion
-
 ### AutomaticDecompression Explained
 
 **Two different compressions:**
@@ -156,7 +142,7 @@ var response = await client.GetAsync("https://api.example.com/data");
    - Purpose: Reduce network bandwidth
    - Result: Handler receives **decompressed** content
 
-2. **Cache Storage Compression** (Our Library)
+2. **Cache Storage Compression** (This library)
    - Controlled by: `CompressionThreshold` in options
    - Purpose: Reduce cache storage size
    - Result: Content compressed before storing in cache
@@ -174,11 +160,11 @@ Our compression: compresses → 600 bytes
 Cache: stores 600 bytes (no Base64 overhead!)
 ```
 
-**Why this matters:**
-- ✅ Cache handler can inspect/validate response content
-- ✅ Cache-Control, ETag, Last-Modified headers readable
-- ✅ Intelligent caching decisions possible
-- ✅ Our compression is optional and controlled
+**Benefits:**
+- Cache handler can inspect and validate response content
+- Cache-Control, ETag, and Last-Modified headers are readable
+- Enables intelligent caching decisions
+- Storage compression is optional and configurable
 
 ### Handler Ordering
 
@@ -222,13 +208,13 @@ Auth applied before caching, headers included in cache key via Vary.
 
 ### Common Mistakes
 
-❌ **Wrong: Not enabling AutomaticDecompression**
+**Wrong: Not enabling AutomaticDecompression**
 ```csharp
 new SocketsHttpHandler()  // Defaults to None!
 ```
 **Problem:** Cache handler receives compressed content, can't inspect properly.
 
-✅ **Correct: Explicitly enable decompression**
+**Correct: Explicitly enable decompression**
 ```csharp
 new SocketsHttpHandler
 {
@@ -236,29 +222,240 @@ new SocketsHttpHandler
 }
 ```
 
-❌ **Wrong: Using legacy HttpClientHandler**
+**Wrong: Using legacy HttpClientHandler**
 ```csharp
 new HttpClientHandler()  // Legacy, less efficient
 ```
 
-✅ **Correct: Use modern SocketsHttpHandler**
+**Correct: Use modern SocketsHttpHandler**
 ```csharp
 new SocketsHttpHandler { /* ... */ }
 ```
 
-❌ **Wrong: Cache handler after Polly**
+**Wrong: Cache handler after Polly**
 ```csharp
 .AddStandardResilienceHandler()  // Outer
 .AddHttpMessageHandler(sp => new HybridCacheHttpHandler(...))  // Inner - Wrong!
 ```
 
-✅ **Correct: Cache handler before Polly**
+**Correct: Cache handler before Polly**
 ```csharp
 .AddHttpMessageHandler(sp => new HybridCacheHttpHandler(...))  // Inner - Correct!
 .AddStandardResilienceHandler()  // Outer
 ```
 
 **Golden Rule:** `HybridCacheHttpHandler` should receive **decompressed, ready-to-use** content.
+
+## Multiple HybridCache Instances
+
+Applications may need different `HybridCache` instances for different purposes (HTTP caching, database caching, session data, etc.).
+
+**Solution:** Use Keyed Services to register multiple `HybridCache` instances with different configurations.
+
+### Basic Example
+
+```csharp
+// Register multiple caches with different configurations
+builder.Services.AddKeyedSingleton("http-cache", (sp, key) =>
+{
+    var options = new HybridCacheOptions
+    {
+        MaximumPayloadBytes = 10 * 1024 * 1024, // 10MB for HTTP responses
+        DefaultEntryOptions = new HybridCacheEntryOptions
+        {
+            Expiration = TimeSpan.FromMinutes(5)
+        }
+    };
+    return new HybridCache(options, sp);
+});
+
+builder.Services.AddKeyedSingleton("db-cache", (sp, key) =>
+{
+    var options = new HybridCacheOptions
+    {
+        MaximumPayloadBytes = 1024 * 1024, // 1MB for DB queries
+        DefaultEntryOptions = new HybridCacheEntryOptions
+        {
+            Expiration = TimeSpan.FromHours(1)
+        }
+    };
+    return new HybridCache(options, sp);
+});
+
+// Use keyed cache in HttpClient
+builder.Services
+    .AddHttpClient("ApiClient")
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AutomaticDecompression = DecompressionMethods.All
+    })
+    .AddHttpMessageHandler(sp => new HybridCacheHttpHandler(
+        sp.GetRequiredKeyedService<HybridCache>("http-cache"), // Keyed resolution
+        TimeProvider.System,
+        new HybridCacheHttpHandlerOptions
+        {
+            DefaultCacheDuration = TimeSpan.FromMinutes(5)
+        },
+        sp.GetRequiredService<ILogger<HybridCacheHttpHandler>>()
+    ));
+```
+
+### Real-World Scenarios
+
+#### Different Retention Policies
+
+```csharp
+// Fast-changing data - short cache
+builder.Services.AddKeyedSingleton<HybridCache>("stocks-cache", (sp, key) =>
+{
+    var options = new HybridCacheOptions
+    {
+        MaximumPayloadBytes = 5 * 1024 * 1024,
+        DefaultEntryOptions = new() { Expiration = TimeSpan.FromSeconds(30) }
+    };
+    return new HybridCache(options, sp);
+});
+
+// Slow-changing data - long cache
+builder.Services.AddKeyedSingleton<HybridCache>("products-cache", (sp, key) =>
+{
+    var options = new HybridCacheOptions
+    {
+        MaximumPayloadBytes = 10 * 1024 * 1024,
+        DefaultEntryOptions = new() { Expiration = TimeSpan.FromHours(1) }
+    };
+    return new HybridCache(options, sp);
+});
+
+// Different clients with different caches
+builder.Services
+    .AddHttpClient("StocksClient")
+    .AddHttpMessageHandler(sp => new HybridCacheHttpHandler(
+        sp.GetRequiredKeyedService<HybridCache>("stocks-cache"),
+        TimeProvider.System,
+        new HybridCacheHttpHandlerOptions { DefaultCacheDuration = TimeSpan.FromSeconds(30) },
+        sp.GetRequiredService<ILogger<HybridCacheHttpHandler>>()
+    ));
+
+builder.Services
+    .AddHttpClient("ProductsClient")
+    .AddHttpMessageHandler(sp => new HybridCacheHttpHandler(
+        sp.GetRequiredKeyedService<HybridCache>("products-cache"),
+        TimeProvider.System,
+        new HybridCacheHttpHandlerOptions { DefaultCacheDuration = TimeSpan.FromHours(1) },
+        sp.GetRequiredService<ILogger<HybridCacheHttpHandler>>()
+    ));
+```
+
+#### L1-Only vs L1+L2
+
+```csharp
+// HTTP caching - L1 only (memory), fast, single instance
+builder.Services.AddKeyedSingleton<HybridCache>("http-l1", (sp, key) =>
+{
+    var options = new HybridCacheOptions
+    {
+        DisableDistributedCache = true, // L1 only
+        MaximumPayloadBytes = 10 * 1024 * 1024
+    };
+    return new HybridCache(options, sp);
+});
+
+// Distributed caching - L1+L2, multi-instance
+builder.Services.AddKeyedSingleton<HybridCache>("http-l2", (sp, key) =>
+{
+    var options = new HybridCacheOptions
+    {
+        DisableDistributedCache = false, // L1 + L2
+        MaximumPayloadBytes = 10 * 1024 * 1024
+    };
+    return new HybridCache(options, sp);
+});
+```
+
+#### Per-Tenant Caching
+
+```csharp
+// Each tenant gets its own cache
+builder.Services.AddKeyedSingleton<HybridCache>("tenant-a-cache", (sp, key) =>
+{
+    var options = new HybridCacheOptions
+    {
+        MaximumPayloadBytes = 10 * 1024 * 1024,
+        DefaultEntryOptions = new() { Expiration = TimeSpan.FromMinutes(10) }
+    };
+    return new HybridCache(options, sp);
+});
+
+builder.Services.AddKeyedSingleton<HybridCache>("tenant-b-cache", (sp, key) =>
+{
+    var options = new HybridCacheOptions
+    {
+        MaximumPayloadBytes = 5 * 1024 * 1024,
+        DefaultEntryOptions = new() { Expiration = TimeSpan.FromMinutes(5) }
+    };
+    return new HybridCache(options, sp);
+});
+
+// Resolve based on tenant context
+builder.Services
+    .AddHttpClient("TenantAwareClient")
+    .AddHttpMessageHandler(sp =>
+    {
+        var tenantContext = sp.GetRequiredService<ITenantContext>();
+        var cacheKey = $"tenant-{tenantContext.TenantId}-cache";
+        var cache = sp.GetRequiredKeyedService<HybridCache>(cacheKey);
+
+        return new HybridCacheHttpHandler(
+            cache,
+            TimeProvider.System,
+            new HybridCacheHttpHandlerOptions(),
+            sp.GetRequiredService<ILogger<HybridCacheHttpHandler>>()
+        );
+    });
+```
+
+### Helper Extension Method
+
+Simplify usage with an extension method:
+
+```csharp
+public static class HybridCacheExtensions
+{
+    public static IHttpClientBuilder AddHttpCaching(
+        this IHttpClientBuilder builder,
+        string cacheKey = "http-cache",
+        Action<HybridCacheHttpHandlerOptions>? configure = null)
+    {
+        return builder.AddHttpMessageHandler(sp =>
+        {
+            var cache = sp.GetRequiredKeyedService<HybridCache>(cacheKey);
+            var options = new HybridCacheHttpHandlerOptions();
+            configure?.Invoke(options);
+
+            return new HybridCacheHttpHandler(
+                cache,
+                TimeProvider.System,
+                options,
+                sp.GetRequiredService<ILogger<HybridCacheHttpHandler>>()
+            );
+        });
+    }
+}
+
+// Usage
+builder.Services
+    .AddHttpClient("ApiClient")
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AutomaticDecompression = DecompressionMethods.All
+    })
+    .AddHttpCaching("api-cache", opts =>
+    {
+        opts.DefaultCacheDuration = TimeSpan.FromMinutes(5);
+        opts.MaxCacheableContentSize = 10 * 1024 * 1024;
+    });
+```
 
 ## Configuration Options
 
@@ -349,22 +546,6 @@ See the `/samples` directory for complete examples:
 - `HttpClientFactorySample`: Integration with IHttpClientFactory
 - `YarpCachingProxySample`: Building a caching reverse proxy with YARP
 
-## Requirements
-
-- .NET 10.0 or later
-
-## License
-
-Licensed under the Apache License 2.0. See LICENSE file for details.
-
-## Contributing
-
-Contributions are welcome. Please ensure tests pass before submitting pull requests.
-
-```bash
-dotnet run --project test/Tests/Tests.csproj
-```
-
 ## Performance & Memory
 
 The handler is designed for high-performance scenarios with several key optimizations:
@@ -375,9 +556,9 @@ The handler is designed for high-performance scenarios with several key optimiza
 
 - **Metadata** (small, ~1-2KB): Status code, headers, timestamps → Stored as JSON
 - **Content** (large, variable): Response body → **Stored as raw `byte[]`**
-  - ✅ **No Base64 encoding** = 33% size savings
-  - ✅ Content deduplication via SHA256 hash
-  - ✅ Same content shared across cache entries (different Vary headers)
+  - **No Base64 encoding** = 33% size savings
+  - Content deduplication via SHA256 hash
+  - Same content shared across cache entries (different Vary headers)
 
 **Trade-offs:**
 - Two cache lookups (metadata + content) vs one lookup
@@ -386,26 +567,9 @@ The handler is designed for high-performance scenarios with several key optimiza
 
 ### Memory Efficiency
 
-- **SegmentedBuffer**: Large responses read in 80KB segments (below 85KB LOH threshold)
-- **Compression**: Optional GZip compression for cached content
-  - Configurable threshold (default: 1KB)
-  - Only compresses compressible content types (text, JSON, XML)
-  - Reduces memory footprint and cache storage costs
-- **ArrayPool Usage**: Byte arrays rented from `ArrayPool<byte>` during read operations
-- **Zero-Copy Streaming**: Cached responses streamed directly without intermediate buffering
-- **Source-Generated Regex & Logging**: Compile-time generation for zero runtime overhead
-
-**LOH Considerations:**
-- Content >85KB will hit Large Object Heap (expected and acceptable)
-- Most API responses <85KB avoid LOH
-- Compression helps reduce LOH pressure for compressible content
-- Trade-off: Reliability (caching large responses) > LOH cost
-
-### Request Collapsing
-
-- **Stampede Prevention**: Multiple concurrent requests for same resource collapsed into single backend request
-- **Automatic Deduplication**: Only one request hits backend while others await cached result
-- Uses `HybridCache.GetOrCreateAsync` for built-in request coalescing
+- **Stampede Prevention** (via `HybridCache.GetOrCreateAsync`): Multiple concurrent requests for the same resource are automatically collapsed into a single backend request
+- **Automatic Deduplication**: Only one request hits the backend while others await the cached result
+- Built-in HybridCache feature - no additional configuration needed
 
 ### Efficient Caching
 
@@ -432,3 +596,7 @@ Run benchmarks to measure performance:
 ```bash
 dotnet run --project benchmarks/Benchmarks.csproj -c Release
 ```
+
+## Contributing
+
+Bug reports should be accompanied by a reproducible test case in a pull rquest.
