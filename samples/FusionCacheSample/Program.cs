@@ -32,6 +32,7 @@ builder.Services
         TimeProvider.System,
         new HybridCacheHttpHandlerOptions
         {
+            Mode = CacheMode.Private, // Private cache for client scenario (scaled-out/serverless)
             DefaultCacheDuration = TimeSpan.FromMinutes(5),
             MaxCacheableContentSize = 10 * 1024 * 1024,
             CompressionThreshold = 1024

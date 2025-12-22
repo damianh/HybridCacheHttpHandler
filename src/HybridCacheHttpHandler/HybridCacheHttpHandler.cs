@@ -158,17 +158,30 @@ public class HybridCacheHttpHandler : DelegatingHandler
                         return null;
                     }
 
-                    // Don't cache responses to requests with Authorization header
-                    // unless response is explicitly marked for caching (RFC 7234 §3.2)
-                    // public/s-maxage for shared caches, private for client caches
+                    // Authorization header handling depends on cache mode
                     if (request.Headers.Authorization != null)
                     {
                         var responseCacheControl = uncachedResponse.Headers.CacheControl;
-                        if (responseCacheControl?.Public != true &&
-                            responseCacheControl?.Private != true &&
-                            responseCacheControl?.SharedMaxAge == null)
+
+                        if (_options.Mode == CacheMode.Shared)
                         {
-                            return null;
+                            // Shared cache: Only cache if explicitly marked public or has s-maxage
+                            if (responseCacheControl?.Public != true &&
+                                responseCacheControl?.SharedMaxAge == null)
+                            {
+                                return null;
+                            }
+                        }
+                        else // CacheMode.Private
+                        {
+                            // Private cache: Cache if marked private, public, or has max-age/s-maxage
+                            if (responseCacheControl?.Private != true &&
+                                responseCacheControl?.Public != true &&
+                                responseCacheControl?.MaxAge == null &&
+                                responseCacheControl?.SharedMaxAge == null)
+                            {
+                                return null;
+                            }
                         }
                     }
 
@@ -594,10 +607,23 @@ public class HybridCacheHttpHandler : DelegatingHandler
 
     private TimeSpan? CalculateFreshnessLifetime(CachedHttpMetadata cached)
     {
-        // RFC 7234 Section 4.2.1: max-age takes precedence
-        if (cached.MaxAge.HasValue && cached.MaxAge.Value > TimeSpan.Zero)
+        // Cache mode determines which max-age to prefer
+        if (_options.Mode == CacheMode.Shared)
         {
-            return cached.MaxAge.Value;
+            // Shared cache: Prefer s-maxage (from CacheControl.SharedMaxAge) over max-age
+            // Note: MaxAge property may contain s-maxage if it was set during response parsing
+            if (cached.MaxAge.HasValue && cached.MaxAge.Value > TimeSpan.Zero)
+            {
+                return cached.MaxAge.Value;
+            }
+        }
+        else // CacheMode.Private
+        {
+            // Private cache: Use max-age only (ignore s-maxage)
+            if (cached.MaxAge.HasValue && cached.MaxAge.Value > TimeSpan.Zero)
+            {
+                return cached.MaxAge.Value;
+            }
         }
 
         // Expires header
@@ -653,6 +679,12 @@ public class HybridCacheHttpHandler : DelegatingHandler
 
         // Don't cache if response has no-store
         if (responseCacheControl?.NoStore == true)
+        {
+            return false;
+        }
+
+        // Shared cache mode: MUST NOT cache responses with private directive
+        if (_options.Mode == CacheMode.Shared && responseCacheControl?.Private == true)
         {
             return false;
         }
@@ -801,14 +833,27 @@ public class HybridCacheHttpHandler : DelegatingHandler
 
         var contentHeaders = originalContentHeaders;
 
+        // Extract cache directives
+        var cacheControl = response.Headers.CacheControl;
+
+        // Determine MaxAge based on cache mode
+        TimeSpan? maxAge = null;
+        if (_options.Mode == CacheMode.Shared)
+        {
+            // Shared cache: Prefer s-maxage, fallback to max-age
+            maxAge = cacheControl?.SharedMaxAge ?? cacheControl?.MaxAge;
+        }
+        else // CacheMode.Private
+        {
+            // Private cache: Use max-age only (ignore s-maxage)
+            maxAge = cacheControl?.MaxAge;
+        }
+
         // Extract ETag
         var etag = response.Headers.ETag?.Tag;
 
         // Extract Last-Modified
         var lastModified = response.Content.Headers.LastModified;
-
-        // Extract max-age for freshness calculation
-        var maxAge = response.Headers.CacheControl?.MaxAge;
 
         // If no explicit caching headers, use default cache duration
         if (!maxAge.HasValue &&

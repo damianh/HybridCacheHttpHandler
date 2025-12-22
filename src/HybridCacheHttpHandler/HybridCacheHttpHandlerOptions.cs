@@ -73,4 +73,11 @@ public class HybridCacheHttpHandlerOptions
     /// Content is always stored separately from metadata to avoid Base64 encoding overhead.
     /// </summary>
     public string ContentKeyPrefix { get; init; } = "httpcache:content:";
+
+    /// <summary>
+    /// Cache mode determining caching behavior.
+    /// Default is Private (browser-like cache, suitable for scaled-out clients).
+    /// Use Shared for proxy/CDN scenarios (e.g., YARP).
+    /// </summary>
+    public CacheMode Mode { get; init; } = CacheMode.Private;
 }

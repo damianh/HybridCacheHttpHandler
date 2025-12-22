@@ -16,6 +16,7 @@ builder.Services.AddHttpClient("YarpCachingClient")
         TimeProvider.System,
         new HybridCacheHttpHandlerOptions
         {
+            Mode = CacheMode.Shared, // Shared cache for proxy scenario
             DefaultCacheDuration = TimeSpan.FromMinutes(10),
             MaxCacheableContentSize = 50 * 1024 * 1024 // 50MB
         },
@@ -41,6 +42,9 @@ app.Map("/api/{**catch-all}", async httpContext =>
 
 Console.WriteLine("YARP Caching Proxy running on http://localhost:5000");
 Console.WriteLine("Try: http://localhost:5000/api/repos/dotnet/runtime");
-Console.WriteLine("\nProxy will cache responses from GitHub API");
+Console.WriteLine("\nProxy will cache responses from GitHub API (Shared Cache Mode)");
+Console.WriteLine("  - Does NOT cache 'Cache-Control: private' responses");
+Console.WriteLine("  - Prefers 's-maxage' over 'max-age'");
+Console.WriteLine("  - RFC 9111 compliant shared cache behavior");
 
 app.Run();

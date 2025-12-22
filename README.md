@@ -459,6 +459,56 @@ builder.Services
 
 ## Configuration Options
 
+### Cache Mode
+
+The library supports two cache modes, following RFC 9111 semantics:
+
+#### CacheMode.Private (Default)
+Browser-like cache behavior suitable for client applications:
+
+**Use Cases:**
+- HttpClient in web applications, APIs, background services
+- Scaled-out clients sharing cache (multiple instances, serverless/Lambda)
+- Per-user/per-tenant caching scenarios
+
+**Behavior:**
+- Caches responses with `Cache-Control: private`
+- Uses `max-age` directive (ignores `s-maxage`)
+- Caches authenticated requests if marked `private` or `max-age`
+- Each cache key is client-specific (Vary headers applied)
+
+**Example:**
+```csharp
+new HybridCacheHttpHandlerOptions
+{
+    Mode = CacheMode.Private, // Shares cache across app instances via Redis L2
+    DefaultCacheDuration = TimeSpan.FromMinutes(5)
+}
+```
+
+#### CacheMode.Shared
+Proxy/CDN-like cache behavior suitable for gateways:
+
+**Use Cases:**
+- Reverse proxies (YARP, Envoy)
+- API gateways
+- Edge caches / CDN-like scenarios
+
+**Behavior:**
+- Does NOT cache responses with `Cache-Control: private`
+- Prefers `s-maxage` over `max-age`
+- Only caches authenticated requests with `public` or `s-maxage`
+- Cache is shared across all clients/users
+
+**Example:**
+```csharp
+new HybridCacheHttpHandlerOptions
+{
+    Mode = CacheMode.Shared, // RFC 9111 shared cache semantics
+    MaxCacheableContentSize = 50 * 1024 * 1024 // 50MB
+}
+```
+
 ### HybridCacheHttpHandlerOptions
 
 - **HeuristicFreshnessPercent**: Heuristic freshness percentage for responses with Last-Modified but no explicit freshness info (default: 0.1 or 10%)
