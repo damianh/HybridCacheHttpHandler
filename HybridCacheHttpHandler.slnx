@@ -13,4 +13,9 @@
     <Project Path="samples/FusionCacheSample/FusionCacheSample.csproj" />
     <Project Path="samples/YarpCachingProxySample/YarpCachingProxySample.csproj" />
   </Folder>
+  <Folder Name="/stress-tests/">
+    <Project Path="stress-tests/AppHost/AppHost.csproj" />
+    <Project Path="stress-tests/Target/Target.csproj" />
+    <Project Path="stress-tests/Runner/Runner.csproj" />
+  </Folder>
 </Solution>
