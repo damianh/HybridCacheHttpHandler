@@ -5,23 +5,12 @@ using Spectre.Console;
 
 namespace Runner.Menu;
 
-public class InteractiveMenu
+public class InteractiveMenu(
+    IEnumerable<ISuite> suites,
+    CachedClientFactory clientFactory,
+    ResultsPresenter presenter)
 {
-    private readonly IEnumerable<ISuite> _suites;
-    private readonly CachedClientFactory _clientFactory;
-    private readonly ResultsPresenter _presenter;
-    private SuiteConfig _config;
-
-    public InteractiveMenu(
-        IEnumerable<ISuite> suites,
-        CachedClientFactory clientFactory,
-        ResultsPresenter presenter)
-    {
-        _suites = suites;
-        _clientFactory = clientFactory;
-        _presenter = presenter;
-        _config = new SuiteConfig(); // Default config
-    }
+    private SuiteConfig _config = new(); // Default config
 
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
@@ -86,7 +75,7 @@ public class InteractiveMenu
 
     private async Task RunSuiteAsync(CancellationToken cancellationToken)
     {
-        var suiteList = _suites.ToList();
+        var suiteList = suites.ToList();
         
         if (!suiteList.Any())
         {
@@ -127,7 +116,7 @@ public class InteractiveMenu
 
     private async Task RunAllSuitesAsync(CancellationToken cancellationToken)
     {
-        var suiteList = _suites.ToList();
+        var suiteList = suites.ToList();
         
         if (!suiteList.Any())
         {
@@ -176,7 +165,7 @@ public class InteractiveMenu
 
     private async Task<SuiteResult> ExecuteSuiteAsync(ISuite suite, CancellationToken cancellationToken, bool showResultsAfter = true)
     {
-        var client = _clientFactory.CreateClient();
+        var client = clientFactory.CreateClient();
         
         var result = await AnsiConsole.Progress()
             .Columns(
@@ -201,7 +190,7 @@ public class InteractiveMenu
 
         if (showResultsAfter)
         {
-            _presenter.ShowResults(result, suite.Name);
+            presenter.ShowResults(result, suite.Name);
         }
 
         return result;

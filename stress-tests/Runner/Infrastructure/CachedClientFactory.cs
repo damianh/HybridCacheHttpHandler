@@ -6,22 +6,11 @@ using Microsoft.Extensions.Logging;
 
 namespace Runner.Infrastructure;
 
-public class CachedClientFactory
+public class CachedClientFactory(
+    HybridCache hybridCache,
+    IConfiguration configuration,
+    ILogger<HybridCacheHttpHandler> logger)
 {
-    private readonly HybridCache _hybridCache;
-    private readonly IConfiguration _configuration;
-    private readonly ILogger<HybridCacheHttpHandler> _logger;
-
-    public CachedClientFactory(
-        HybridCache hybridCache,
-        IConfiguration configuration,
-        ILogger<HybridCacheHttpHandler> logger)
-    {
-        _hybridCache = hybridCache;
-        _configuration = configuration;
-        _logger = logger;
-    }
-
     public HttpClient CreateClient(HybridCacheHttpHandlerOptions? options = null)
     {
         options ??= new HybridCacheHttpHandlerOptions
@@ -33,10 +22,10 @@ public class CachedClientFactory
         };
 
         var handler = new HybridCacheHttpHandler(
-            _hybridCache,
+            hybridCache,
             TimeProvider.System,
             options,
-            _logger)
+            logger)
         {
             InnerHandler = new SocketsHttpHandler
             {
@@ -48,7 +37,7 @@ public class CachedClientFactory
 
         var client = new HttpClient(handler)
         {
-            BaseAddress = new Uri(_configuration["TARGET_URL"] ?? "http://localhost:5001")
+            BaseAddress = new Uri(configuration["TARGET_URL"] ?? "http://localhost:5001")
         };
 
         return client;
@@ -65,7 +54,7 @@ public class CachedClientFactory
 
         return new HttpClient(handler)
         {
-            BaseAddress = new Uri(_configuration["TARGET_URL"] ?? "http://localhost:5001")
+            BaseAddress = new Uri(configuration["TARGET_URL"] ?? "http://localhost:5001")
         };
     }
 }
