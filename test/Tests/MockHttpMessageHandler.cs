@@ -9,8 +9,9 @@ internal class MockHttpMessageHandler : HttpMessageHandler
     private readonly Func<HttpResponseMessage>? _responseFactory;
     private readonly Func<Task<HttpResponseMessage>>? _asyncResponseFactory;
     private readonly Func<HttpRequestMessage, Task<HttpResponseMessage>>? _requestResponseFactory;
+    private int _requestCount;
 
-    public int RequestCount { get; private set; }
+    public int RequestCount => _requestCount;
     public HttpRequestMessage? LastRequest { get; private set; }
 
     public MockHttpMessageHandler(HttpResponseMessage? response = null)
@@ -29,7 +30,7 @@ internal class MockHttpMessageHandler : HttpMessageHandler
         HttpRequestMessage request,
         Ct ct)
     {
-        RequestCount++;
+        Interlocked.Increment(ref _requestCount);
         LastRequest = request;
 
         HttpResponseMessage response;
