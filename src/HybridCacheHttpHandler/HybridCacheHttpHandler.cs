@@ -174,11 +174,9 @@ public class HybridCacheHttpHandler : DelegatingHandler
                         }
                         else // CacheMode.Private
                         {
-                            // Private cache: Cache if marked private, public, or has max-age/s-maxage
-                            if (responseCacheControl?.Private != true &&
-                                responseCacheControl?.Public != true &&
-                                responseCacheControl?.MaxAge == null &&
-                                responseCacheControl?.SharedMaxAge == null)
+                            // Private cache: Require explicit public or private directive for Authorization requests
+                            if (responseCacheControl?.Public != true &&
+                                responseCacheControl?.Private != true)
                             {
                                 return null;
                             }
