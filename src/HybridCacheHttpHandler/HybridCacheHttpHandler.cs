@@ -818,11 +818,13 @@ public class HybridCacheHttpHandler : DelegatingHandler
 
         // Apply compression if enabled and content is large enough
         var isCompressed = false;
+        var originalContent = finalContent;
+        var contentToCache = finalContent;
         if (_options.CompressionThreshold.HasValue &&
             finalContent.Length >= _options.CompressionThreshold.Value &&
             IsCompressible(response.Content.Headers.ContentType?.MediaType))
         {
-            finalContent = CompressContent(finalContent);
+            contentToCache = CompressContent(finalContent);
             isCompressed = true;
         }
 
@@ -942,10 +944,10 @@ public class HybridCacheHttpHandler : DelegatingHandler
 
         // Store content separately (always, to avoid Base64 encoding)
         // Store content first (write order: content before metadata for atomicity)
-        var contentKey = await _contentCache.StoreContentAsync(finalContent, Ct.None);
+        var contentKey = await _contentCache.StoreContentAsync(contentToCache, Ct.None);
 
         // Restore response content so caller can use it (content was consumed during read)
-        response.Content = new ByteArrayContent(finalContent);
+        response.Content = new ByteArrayContent(originalContent);
         foreach (var header in originalContentHeaders)
         {
             response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
@@ -955,7 +957,7 @@ public class HybridCacheHttpHandler : DelegatingHandler
         {
             StatusCode = (int)response.StatusCode,
             ContentKey = contentKey,
-            ContentLength = finalContent.Length,
+            ContentLength = contentToCache.Length,
             Headers = headers,
             ContentHeaders = contentHeaders,
             CachedAt = _timeProvider.GetUtcNow(),
