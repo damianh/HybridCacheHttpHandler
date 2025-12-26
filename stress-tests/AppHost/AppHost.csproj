@@ -15,7 +15,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Target\Target.csproj" />
-    <ProjectReference Include="..\Runner\Runner.csproj" />
     <ProjectReference Include="..\ServiceDefaults\ServiceDefaults.csproj" IsAspireSharedProject="true" IsAspireProjectResource="false" />
   </ItemGroup>
 

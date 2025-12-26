@@ -1,6 +1,6 @@
 # Stress Tests
 
-Interactive stress testing for HybridCacheHttpHandler with Redis L2 cache and Aspire orchestration.
+xUnit-based stress testing for HybridCacheHttpHandler with Redis L2 cache, Aspire orchestration, and JetBrains dotMemoryUnit integration.
 
 ## Status
 
@@ -8,79 +8,107 @@ Interactive stress testing for HybridCacheHttpHandler with Redis L2 cache and As
 
 ## Structure
 
-- **AppHost/** - .NET Aspire orchestrator (coordinates Target, Runner, Redis) ✅
-- **Target/** - Web API with minimal endpoints (various caching scenarios) ✅
-- **Runner/** - Interactive console test runner ✅
+- **AppHost/** - .NET Aspire orchestrator (Redis + Target) ✅
+- **Target/** - Web API with test endpoints (various caching scenarios) ✅
+- **StressTests/** - xUnit tests with dotMemoryUnit for memory profiling ✅
+- **ServiceDefaults/** - Shared Aspire configuration ✅
 
-## Running with Aspire
+## Quick Start
 
-### Recommended: Use Aspire AppHost
+### Step 1: Start Infrastructure
 
 ```bash
+# Terminal 1: Start Target API and Redis via Aspire
 cd stress-tests/AppHost
 dotnet run
 ```
 
-This will:
-- Start the Target web server on http://localhost:5001
-- Start Redis container automatically
-- Start the Runner console app with **interactive menu**
-- Open Aspire Dashboard at http://localhost:15000
+**This starts:**
+- Redis on localhost:6379
+- Target API on http://localhost:5001
+- Aspire Dashboard at https://apphost.dev.localhost:17233
 
-### Interactive Menu Features
-
-The Runner provides a rich interactive menu with:
-
-**Main Menu:**
-- **Run Suite** - Select and run a specific test suite
-- **Run All Suites** - Execute all suites sequentially
-- **Configure** - Customize test parameters
-- **View Configuration** - Display current settings
-- **Exit** - Close the application
-
-**Suite Execution:**
-- Real-time progress bar with percentage
-- Live metrics (cache hits/misses, average latency)
-- Detailed results with color-coded status
-- Summary statistics (latency percentiles, memory, GC)
-
-**Configuration Options:**
-- Concurrent Clients (1-1000)
-- Total Requests (1-100,000)
-- Duration (1-60 minutes)
-- Target URL
-- Enable/Disable Diagnostics
-- Reset to Defaults
-
-**Batch Execution:**
-- Run all suites with summary table
-- Pass/fail status for each suite
-- Aggregate metrics across all tests
-
-The Aspire Dashboard provides:
-- **Logs** - View all application logs in real-time
-- **Metrics** - Monitor performance metrics
-- **Traces** - Distributed tracing across components
-- **Resources** - Container and service status
-
-### Alternative: Manual Setup
+### Step 2: Run Stress Tests
 
 ```bash
-# Terminal 1: Start Target web server
+# Terminal 2: Run xUnit stress tests
+cd stress-tests/StressTests
+dotnet test
+```
+
+**Output:**
+```
+Passed!  - Failed: 0, Passed: 1, Skipped: 0, Total: 1, Duration: 2 s
+✓ Cache Hit Ratio: 99.0%
+✓ Memory Growth: 2.34 MB
+```
+
+## Test Suites
+
+### 1. Cache Stampede Test (~2 seconds)
+**Test:** `CacheStampede_ThunderingHerd_OnlyOneBackendCall`
+
+- 100 concurrent requests to same endpoint
+- Validates request collapsing (thundering herd protection)
+- **Expected:** >95% cache hits, <10MB memory growth
+
+### 2. Sustained Load Test (5 minutes, skipped by default)
+**Test:** `SustainedLoad_5Minutes_NoMemoryLeak`
+
+- 20 concurrent clients, ~400 req/s total
+- Detects memory leaks under sustained load
+- **Expected:** <1% error rate, <50MB memory growth
+
+**Run explicitly:**
+```bash
+dotnet test --filter "SustainedLoad"
+```
+
+## Memory Profiling with dotMemoryUnit
+
+### Automatic Snapshots
+
+Tests decorated with `[DotMemoryUnit]` automatically:
+- Capture memory snapshots at `dotMemory.Check()` calls
+- Track allocations
+- Analyze for memory leaks
+- Generate .dmw snapshot files
+
+### Viewing Snapshots
+
+```bash
+# Snapshot files location
+cd stress-tests/StressTests/bin/Debug/net10.0/
+
+# Open in dotMemory (if installed)
+dotMemory.exe *.dmw
+```
+
+### Features
+- ✅ Baseline and final snapshots
+- ✅ Periodic snapshots every 10K requests
+- ✅ Automatic leak detection
+- ✅ Allocation hotspot analysis
+- ✅ Object retention tracking
+
+## Alternative: Manual Setup
+
+```bash
+# Terminal 1: Start Redis
+docker run -d -p 6379:6379 redis:latest
+
+# Terminal 2: Start Target web server
 cd stress-tests/Target
 dotnet run
 
-# Terminal 2: Start Redis
-docker run -d -p 6379:6379 redis:latest
-
-# Terminal 3: Run test suite
-cd stress-tests/Runner
-$env:TARGET_URL="http://localhost:5000"
+# Terminal 3: Run tests
+cd stress-tests/StressTests
+$env:TARGET_URL="http://localhost:5001"
 $env:ConnectionStrings__redis="localhost:6379"
-dotnet run
+dotnet test
 ```
 
-## Endpoints Available
+## Target API Endpoints
 
 Target provides these endpoints for testing:
 
@@ -118,90 +146,86 @@ Target provides these endpoints for testing:
 - Service discovery and configuration
 - Redis container management
 
-**Target (Web API):**
-- 15+ endpoints covering various caching scenarios
-- Minimal API design
-- Response generator (compressible, random, JSON content)
-- Output caching configured
+### Conditional Requests
+- `GET /api/conditional/etag/{id}` - ETag support
+- `GET /api/conditional/lastmodified/{id}` - Last-Modified support
+- `GET /api/conditional/both/{id}` - Both ETag and Last-Modified
 
-**Runner (Console App):**
-- `InteractiveMenu` - Full Spectre.Console menu system ✅
-- `CachedClientFactory` - Creates HttpClients with HybridCacheHttpHandler
-- `MetricsCollector` - Latency (P50/P95/P99), memory, GC tracking  
-- `ResultsPresenter` - Spectre.Console formatted output
-- Configuration types (SuiteConfig, SuiteResult, SuiteMetrics)
+## Aspire Dashboard
 
-**Test Suites:**
-- `CacheStampedeSuite` - 100 concurrent requests testing request collapsing
+When AppHost is running, access the dashboard to:
+- **View Logs** - Real-time logs from Target and Redis
+- **Monitor Metrics** - Performance counters
+- **Trace Requests** - Distributed tracing (if OpenTelemetry enabled)
+- **Check Resources** - Container and service status
 
-**Integration:**
-- Added to HybridCacheHttpHandler.slnx
-- All projects build successfully ✅
-- Redis L2 cache configured via StackExchangeRedis
-- Aspire service discovery integrated
+## CI/CD Integration
 
-### 📋 TODO
+### GitHub Actions Example
 
-**High Priority:**
-1. **More Test Suites:**
-   - `MixedWorkloadSuite` - Various endpoints and sizes
-   - `SustainedLoadSuite` - Long-running stability (5+ minutes)
-   - `VaryHeaderSuite` - Content negotiation caching
-   - `ContentTypeSuite` - Compression behavior validation
-   - `ConditionalRequestSuite` - ETag/Last-Modified under load
-   - `L2CacheSuite` - Redis distributed cache validation
+```yaml
+name: Stress Tests
 
-**Medium Priority:**
-2. **Enhanced Reporting:**
-   - Export results to JSON/CSV
-   - Comparison mode (before/after)
-   - Historical trending
-3. **Configurable Parameters:**
-   - appsettings.json for suite customization
-   - Command-line arguments
+on: [push, pull_request]
 
-## Example Output
-
-### Main Menu
-
-```
-══════════════════════════════════════════════════════
-     HybridCacheHttpHandler Stress Test Runner
-══════════════════════════════════════════════════════
-
-? What would you like to do?
-  > Run Suite
-    Run All Suites
-    Configure
-    View Configuration
-    Exit
+jobs:
+  stress-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '10.0.x'
+    
+    - name: Start Redis
+      run: docker run -d -p 6379:6379 redis:latest
+    
+    - name: Start Target API
+      run: |
+        cd stress-tests/Target
+        dotnet run &
+        sleep 10
+    
+    - name: Run Stress Tests
+      run: |
+        cd stress-tests/StressTests
+        dotnet test --logger "trx;LogFileName=test-results.trx"
+    
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results
+        path: stress-tests/StressTests/TestResults/*.trx
 ```
 
-### Suite Execution
-### Suite Execution
+## Troubleshooting
 
+### "Target machine actively refused connection"
+→ Start AppHost: `cd stress-tests/AppHost && dotnet run`
+
+### "Value cannot be null (Parameter 'configuration')"
+→ Set Redis connection string: `$env:ConnectionStrings__redis = "localhost:6379"`
+
+### "No .dmw files generated"
+→ Check: `stress-tests/StressTests/bin/Debug/net10.0/`  
+→ Ensure dotMemoryUnit package is installed
+
+### Tests timeout
+→ Increase timeout:  
+```bash
+dotnet test -- RunConfiguration.TestSessionTimeout=600000
 ```
-══════════════════════════════════════════════════════
-     HybridCacheHttpHandler Stress Test Runner
-══════════════════════════════════════════════════════
 
-Running Cache Stampede Test... ████████████████░░░░ 82% 
-(Hits: 81, Misses: 1, Avg: 105.23ms)
-```
+## Resources
 
-### Test Results
-
-```
-══════════════════════════════════════════════════════
-     HybridCacheHttpHandler Stress Test Runner
-══════════════════════════════════════════════════════
-
-╔══════════════════════════════════════════╗
-║  Cache Stampede Test - PASSED            ║
-╚══════════════════════════════════════════╝
-
-Summary:
-✓ Request collapsing worked - only 1-2 backend calls
+- [dotMemoryUnit Documentation](https://www.jetbrains.com/help/dotmemory-unit/)
+- [xUnit Documentation](https://xunit.net/)
+- [Aspire Documentation](https://learn.microsoft.com/en-us/dotnet/aspire/)
+- [StressTests/README.md](StressTests/README.md) - Detailed test documentation
 
 ╭─────────────────────┬──────────────╮
 │ Metric              │ Value        │
