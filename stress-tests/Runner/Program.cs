@@ -1,9 +1,9 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Runner;
 using Runner.Config;
 using Runner.Infrastructure;
-using Runner.Menu;
 using Runner.Suites;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -43,13 +43,25 @@ builder.Services.AddSingleton<ISuite>(sp =>
 
 // Infrastructure
 builder.Services.AddSingleton<CachedClientFactory>();
-builder.Services.AddSingleton<ResultsPresenter>();
 
-// Menu
-builder.Services.AddSingleton<InteractiveMenu>();
+// Non-interactive runner for Aspire
+builder.Services.AddSingleton<SuiteRunner>();
 
 var host = builder.Build();
 
-// Run interactive menu
-var menu = host.Services.GetRequiredService<InteractiveMenu>();
-await menu.RunAsync();
+// Check if running interactively or via Aspire
+var isInteractive = args.Contains("--interactive") || Environment.UserInteractive;
+
+if (isInteractive)
+{
+    // Interactive mode - wait for user input (for manual testing)
+    Console.WriteLine("Starting stress tests in 5 seconds...");
+    Console.WriteLine("Press Ctrl+C to cancel");
+    await Task.Delay(5000);
+}
+
+// Run all suites
+var runner = host.Services.GetRequiredService<SuiteRunner>();
+var exitCode = await runner.RunAllSuitesAsync();
+
+Environment.Exit(exitCode);
