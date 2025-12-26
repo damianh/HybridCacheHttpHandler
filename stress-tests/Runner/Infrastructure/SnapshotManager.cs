@@ -49,14 +49,15 @@ public class SnapshotManager : IDisposable
 
         try
         {
-            // dotMemoryUnit 3.x automatically saves to workspace directory
-            // We'll manually manage snapshot files via dotMemory.Check()
+            // Check if dotMemoryUnit is available (running under test framework)
+            // If not available, we'll still collect basic memory metrics
             _isInitialized = true;
-            Console.WriteLine($"[MemoryProfiler] Initialized. Snapshots will be analyzed in-memory.");
+            Console.WriteLine($"[MemoryProfiler] Initialized. Basic memory tracking enabled.");
+            Console.WriteLine($"[MemoryProfiler] Note: dotMemory snapshots require running under dotMemoryUnit test framework.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Warning: Failed to initialize dotMemoryUnit: {ex.Message}");
+            Console.WriteLine($"Warning: Failed to initialize memory profiling: {ex.Message}");
             Console.WriteLine("Continuing without memory profiling...");
         }
     }
@@ -72,21 +73,31 @@ public class SnapshotManager : IDisposable
         }
 
         var snapshotId = $"snapshot-{++_snapshotCounter:D3}";
+        
+        // Force GC before measurement for cleaner results
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        
         var memoryBytes = GC.GetTotalMemory(false);
 
         try
         {
-            // Force GC before snapshot for cleaner results
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-
-            // Take dotMemory snapshot
-            dotMemory.Check(memory =>
+            // Try to take dotMemory snapshot if available
+            // This will only work when running under dotMemoryUnit test framework
+            try
             {
-                // This block executes with snapshot context
-                Console.WriteLine($"[MemoryProfiler] Snapshot {snapshotId} taken: {label}");
-            });
+                dotMemory.Check(memory =>
+                {
+                    // This block executes with snapshot context
+                    Console.WriteLine($"[MemoryProfiler] dotMemory snapshot {snapshotId} taken: {label}");
+                });
+            }
+            catch (InvalidOperationException)
+            {
+                // dotMemoryUnit not available - just use basic GC metrics
+                Console.WriteLine($"[MemoryProfiler] Basic snapshot {snapshotId} recorded: {label} ({FormatBytes(memoryBytes)})");
+            }
 
             var snapshot = new SnapshotInfo
             {
@@ -95,7 +106,7 @@ public class SnapshotManager : IDisposable
                 Timestamp = DateTime.UtcNow,
                 RequestCount = requestCount,
                 MemoryBytes = memoryBytes,
-                FilePath = Path.Combine(GetRunDirectory(), $"{snapshotId}.dmw")
+                FilePath = null // No .dmw file when dotMemoryUnit not available
             };
 
             _snapshots.Add(snapshot);
@@ -155,6 +166,19 @@ public class SnapshotManager : IDisposable
     private string GetRunDirectory()
     {
         return Path.Combine(_outputPath, _runId);
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len /= 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
     }
 
     public void Dispose()
