@@ -87,10 +87,19 @@ public class CacheStressTests : IDisposable
 
         // Take baseline memory snapshot
         var memBefore = GC.GetTotalMemory(true);
-        dotMemory.Check(memory =>
+        
+        // Try to take dotMemory snapshot if available
+        try
         {
-            Console.WriteLine($"Baseline memory: {FormatBytes(memory.GetObjects(where => where.Namespace.Like("DamianH.*")).ObjectsCount)}");
-        });
+            dotMemory.Check(memory =>
+            {
+                Console.WriteLine($"[dotMemoryUnit] Baseline snapshot taken");
+            });
+        }
+        catch (Exception)
+        {
+            Console.WriteLine($"[GC] Baseline memory: {FormatBytes(memBefore)}");
+        }
 
         // Act - Fire 100 concurrent requests to same endpoint
         var tasks = Enumerable.Range(0, concurrency)
@@ -99,7 +108,20 @@ public class CacheStressTests : IDisposable
                 var response = await _cachedClient.GetAsync(url);
                 response.EnsureSuccessStatusCode();
                 var content = await response.Content.ReadAsStringAsync();
-                return response.Headers.Age?.TotalSeconds > 0 || response.Headers.Contains("X-Cache-Status");
+                
+                // Check for cache hit indicators
+                var hasAge = response.Headers.Age != null && response.Headers.Age.Value.TotalSeconds > 0;
+                var hasCacheStatus = response.Headers.TryGetValues("X-Cache-Status", out var _);
+                var isCacheHit = hasAge || hasCacheStatus;
+                
+                // Debug first few responses
+                if (i < 3)
+                {
+                    var cacheStatusValue = response.Headers.TryGetValues("X-Cache-Status", out var values) ? values.FirstOrDefault() : "none";
+                    Console.WriteLine($"  Request {i}: Age={response.Headers.Age?.TotalSeconds ?? 0}s, X-Cache-Status={cacheStatusValue}, CacheHit={isCacheHit}");
+                }
+                
+                return isCacheHit;
             })
             .ToArray();
 
@@ -107,10 +129,18 @@ public class CacheStressTests : IDisposable
 
         // Take after-test memory snapshot
         var memAfter = GC.GetTotalMemory(false);
-        dotMemory.Check(memory =>
+        
+        try
         {
-            Console.WriteLine($"After test memory: {FormatBytes(memory.GetObjects(where => where.Namespace.Like("DamianH.*")).ObjectsCount)}");
-        });
+            dotMemory.Check(memory =>
+            {
+                Console.WriteLine($"[dotMemoryUnit] Final snapshot taken");
+            });
+        }
+        catch (Exception)
+        {
+            Console.WriteLine($"[GC] Final memory: {FormatBytes(memAfter)}");
+        }
 
         // Assert
         var hitRatio = cacheHits.Count(x => x) / (double)concurrency;
@@ -124,7 +154,7 @@ public class CacheStressTests : IDisposable
         Console.WriteLine($"✓ Memory Growth: {FormatBytes(memGrowth)}");
     }
 
-    [Fact(Skip = "Long-running test (5 minutes) - run explicitly")]
+    [Fact]
     [DotMemoryUnit(CollectAllocations = true, FailIfRunWithoutSupport = false)]
     public async Task SustainedLoad_5Minutes_NoMemoryLeak()
     {
@@ -140,7 +170,15 @@ public class CacheStressTests : IDisposable
         };
 
         var memStart = GC.GetTotalMemory(true);
-        dotMemory.Check(memory => Console.WriteLine("Baseline snapshot taken"));
+        
+        try
+        {
+            dotMemory.Check(memory => Console.WriteLine("[dotMemoryUnit] Baseline snapshot taken"));
+        }
+        catch (Exception)
+        {
+            Console.WriteLine($"[GC] Baseline memory: {FormatBytes(memStart)}");
+        }
 
         var cts = new CancellationTokenSource(duration);
         var requestCount = 0;
@@ -163,8 +201,15 @@ public class CacheStressTests : IDisposable
                         // Take periodic snapshots
                         if (requestCount % 10000 == 0)
                         {
-                            dotMemory.Check(memory => 
-                                Console.WriteLine($"Snapshot at {requestCount:N0} requests"));
+                            try
+                            {
+                                dotMemory.Check(memory => 
+                                    Console.WriteLine($"[dotMemoryUnit] Snapshot at {requestCount:N0} requests"));
+                            }
+                            catch (Exception)
+                            {
+                                Console.WriteLine($"[GC] Checkpoint at {requestCount:N0} requests");
+                            }
                         }
                     }
                     catch (OperationCanceledException)
@@ -185,7 +230,15 @@ public class CacheStressTests : IDisposable
 
         // Take final snapshot
         var memEnd = GC.GetTotalMemory(false);
-        dotMemory.Check(memory => Console.WriteLine("Final snapshot taken"));
+        
+        try
+        {
+            dotMemory.Check(memory => Console.WriteLine("[dotMemoryUnit] Final snapshot taken"));
+        }
+        catch (Exception)
+        {
+            Console.WriteLine($"[GC] Final memory: {FormatBytes(memEnd)}");
+        }
 
         // Assert
         var memGrowth = memEnd - memStart;
