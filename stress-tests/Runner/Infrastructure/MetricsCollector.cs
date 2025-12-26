@@ -9,6 +9,7 @@ public class MetricsCollector
     private long _startMemory;
     private long _peakMemory;
     private int _gen0Start, _gen1Start, _gen2Start;
+    private readonly MemoryProfiler? _memoryProfiler;
     
     public int TotalRequests { get; private set; }
     public int SuccessfulRequests { get; private set; }
@@ -16,8 +17,11 @@ public class MetricsCollector
     public int CacheMisses { get; private set; }
     public double AverageLatencyMs => _latencies.Count > 0 ? _latencies.Average() : 0;
 
-    public MetricsCollector()
-        => StartMemoryTracking();
+    public MetricsCollector(MemoryProfiler? memoryProfiler = null)
+    {
+        _memoryProfiler = memoryProfiler;
+        StartMemoryTracking();
+    }
 
     private void StartMemoryTracking()
     {
@@ -57,6 +61,9 @@ public class MetricsCollector
             {
                 _peakMemory = currentMemory;
             }
+
+            // Check if we should take a memory snapshot
+            _memoryProfiler?.CheckAndTakeSnapshot(TotalRequests);
         }
     }
 

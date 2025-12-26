@@ -6,6 +6,13 @@ namespace Runner.Suites;
 
 public class CacheStampedeSuite : ISuite
 {
+    private readonly MemoryProfilingConfig _memoryConfig;
+
+    public CacheStampedeSuite(MemoryProfilingConfig memoryConfig)
+    {
+        _memoryConfig = memoryConfig;
+    }
+
     public string Name => "Cache Stampede Test";
     
     public string Description => 
@@ -21,7 +28,12 @@ public class CacheStampedeSuite : ISuite
         CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
-        var metrics = new MetricsCollector();
+        
+        // Initialize memory profiling
+        using var memoryProfiler = new MemoryProfiler(_memoryConfig);
+        memoryProfiler.Start();
+        
+        var metrics = new MetricsCollector(memoryProfiler);
         var errors = new List<string>();
 
         // Setup
@@ -71,6 +83,10 @@ public class CacheStampedeSuite : ISuite
             .ToArray();
 
         await Task.WhenAll(tasks);
+        
+        // Stop memory profiling and analyze
+        var memoryReport = await memoryProfiler.StopAndAnalyzeAsync(metrics.TotalRequests);
+        
         sw.Stop();
 
         var collectedMetrics = metrics.GetMetrics();
@@ -78,10 +94,26 @@ public class CacheStampedeSuite : ISuite
         // Validate
         var success = errors.Count == 0 && 
                      collectedMetrics.CacheHitRatio > 0.95; // 95% should be cache hits
+        
+        // Add memory leak warnings to errors if detected
+        if (memoryReport.HasMemoryLeak)
+        {
+            errors.Add($"⚠️ Memory leak detected: {string.Join(", ", memoryReport.PotentialLeaks.Select(l => l.Description))}");
+            
+            if (_memoryConfig.FailOnLeakDetection)
+            {
+                success = false;
+            }
+        }
 
         var summary = success 
             ? "✓ Request collapsing worked - only 1-2 backend calls"
             : "✗ Too many cache misses or errors occurred";
+        
+        if (memoryReport.Warnings.Count > 0)
+        {
+            summary += $"\nMemory warnings: {memoryReport.Warnings.Count}";
+        }
 
         return new SuiteResult
         {

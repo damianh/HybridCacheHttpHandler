@@ -416,3 +416,9 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Memory profiling outputs
+**/profiles/
+!**/profiles/README.md
+*.dmw
+*.dmwb
