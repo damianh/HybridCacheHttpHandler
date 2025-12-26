@@ -43,7 +43,7 @@ public class InteractiveMenu(
     private void ShowWelcome()
     {
         AnsiConsole.Clear();
-        
+
         var rule = new Rule("[yellow bold]HybridCacheHttpHandler Stress Test Runner[/]")
         {
             Justification = Justify.Center
@@ -76,7 +76,7 @@ public class InteractiveMenu(
     private async Task RunSuiteAsync(CancellationToken cancellationToken)
     {
         var suiteList = suites.ToList();
-        
+
         if (!suiteList.Any())
         {
             AnsiConsole.MarkupLine("[red]No test suites available![/]");
@@ -96,7 +96,7 @@ public class InteractiveMenu(
 
         AnsiConsole.Clear();
         ShowWelcome();
-        
+
         var panel = new Panel(
             new Markup($"[bold]{suite.Name}[/]\n\n{Markup.Escape(suite.Description)}\n\n[dim]Estimated duration: {suite.EstimatedDuration.TotalSeconds:F0}s[/]"))
         {
@@ -143,7 +143,7 @@ public class InteractiveMenu(
         for (var i = 0; i < suiteList.Count; i++)
         {
             var suite = suiteList[i];
-            
+
             AnsiConsole.Clear();
             ShowWelcome();
             AnsiConsole.MarkupLine($"[yellow]Running suite {i + 1} of {suiteList.Count}[/]");
@@ -151,13 +151,15 @@ public class InteractiveMenu(
 
             var result = await ExecuteSuiteAsync(suite, cancellationToken, showResultsAfter: false);
             allResults.Add((suite.Name, result));
-            
-            if (i < suiteList.Count - 1)
+
+            if (i >= suiteList.Count - 1)
             {
-                AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine("[dim]Press any key to continue to next suite...[/]");
-                Console.ReadKey();
+                continue;
             }
+
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[dim]Press any key to continue to next suite...[/]");
+            Console.ReadKey();
         }
 
         ShowAllSuitesResults(allResults);
@@ -166,7 +168,7 @@ public class InteractiveMenu(
     private async Task<SuiteResult> ExecuteSuiteAsync(ISuite suite, CancellationToken cancellationToken, bool showResultsAfter = true)
     {
         var client = clientFactory.CreateClient();
-        
+
         var result = await AnsiConsole.Progress()
             .Columns(
                 new TaskDescriptionColumn(),
@@ -200,7 +202,7 @@ public class InteractiveMenu(
     {
         AnsiConsole.Clear();
         ShowWelcome();
-        
+
         var table = new Table();
         table.Border(TableBorder.Rounded);
         table.AddColumn("[bold]Suite[/]");
@@ -260,8 +262,8 @@ public class InteractiveMenu(
                     ConcurrentClients = AnsiConsole.Prompt(
                         new TextPrompt<int>("Enter number of concurrent clients:")
                             .DefaultValue(_config.ConcurrentClients)
-                            .Validate(n => n > 0 && n <= 1000 
-                                ? ValidationResult.Success() 
+                            .Validate(n => n is > 0 and <= 1000
+                                ? ValidationResult.Success()
                                 : ValidationResult.Error("Must be between 1 and 1000")))
                 };
                 AnsiConsole.MarkupLine("[green]✓ Updated[/]");
@@ -273,8 +275,8 @@ public class InteractiveMenu(
                     TotalRequests = AnsiConsole.Prompt(
                         new TextPrompt<int>("Enter total number of requests:")
                             .DefaultValue(_config.TotalRequests)
-                            .Validate(n => n > 0 && n <= 100000 
-                                ? ValidationResult.Success() 
+                            .Validate(n => n is > 0 and <= 100000
+                                ? ValidationResult.Success()
                                 : ValidationResult.Error("Must be between 1 and 100000")))
                 };
                 AnsiConsole.MarkupLine("[green]✓ Updated[/]");
@@ -284,8 +286,8 @@ public class InteractiveMenu(
                 var minutes = AnsiConsole.Prompt(
                     new TextPrompt<int>("Enter duration in minutes:")
                         .DefaultValue((int)_config.Duration.TotalMinutes)
-                        .Validate(n => n > 0 && n <= 60 
-                            ? ValidationResult.Success() 
+                        .Validate(n => n is > 0 and <= 60
+                            ? ValidationResult.Success()
                             : ValidationResult.Error("Must be between 1 and 60 minutes")));
                 _config = _config with { Duration = TimeSpan.FromMinutes(minutes) };
                 AnsiConsole.MarkupLine("[green]✓ Updated[/]");
@@ -305,7 +307,7 @@ public class InteractiveMenu(
                 _config = _config with
                 {
                     IncludeDiagnostics = AnsiConsole.Confirm(
-                        "Include diagnostic headers?", 
+                        "Include diagnostic headers?",
                         _config.IncludeDiagnostics)
                 };
                 AnsiConsole.MarkupLine("[green]✓ Updated[/]");

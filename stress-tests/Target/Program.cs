@@ -3,6 +3,9 @@ using Target.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Add Aspire service defaults (OpenTelemetry, health checks, service discovery)
+builder.AddServiceDefaults();
+
 // Services
 builder.Services.AddSingleton<ResponseGenerator>();
 
@@ -10,6 +13,9 @@ builder.Services.AddSingleton<ResponseGenerator>();
 builder.Services.AddOutputCache();
 
 var app = builder.Build();
+
+// Map health checks
+app.MapDefaultEndpoints();
 
 app.UseOutputCache();
 

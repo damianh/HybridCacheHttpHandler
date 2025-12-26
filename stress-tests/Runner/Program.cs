@@ -1,14 +1,15 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Runner.Config;
 using Runner.Infrastructure;
 using Runner.Menu;
 using Runner.Suites;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Add service discovery for Redis connection
-builder.Services.AddServiceDiscovery();
+// Add Aspire service defaults (OpenTelemetry, health checks, service discovery)
+builder.AddServiceDefaults();
 
 // Add Redis distributed cache
 builder.Services.AddStackExchangeRedisCache(options =>
@@ -30,12 +31,18 @@ builder.Services.AddHybridCache(options =>
     };
 });
 
+// Memory profiling configuration
+var memoryConfig = new MemoryProfilingConfig();
+builder.Services.AddSingleton(memoryConfig);
+
 // Register suites
-builder.Services.AddSingleton<ISuite, CacheStampedeSuite>();
+builder.Services.AddSingleton<ISuite>(sp => 
+    new CacheStampedeSuite(sp.GetRequiredService<MemoryProfilingConfig>()));
+builder.Services.AddSingleton<ISuite>(sp => 
+    new MemoryLeakDetectionSuite(sp.GetRequiredService<MemoryProfilingConfig>()));
 
 // Infrastructure
 builder.Services.AddSingleton<CachedClientFactory>();
-builder.Services.AddSingleton<MetricsCollector>();
 builder.Services.AddSingleton<ResultsPresenter>();
 
 // Menu
