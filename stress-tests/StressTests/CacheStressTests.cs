@@ -1,0 +1,221 @@
+using DamianH.HybridCacheHttpHandler;
+using JetBrains.dotMemoryUnit;
+using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Caching.StackExchangeRedis;
+using Microsoft.Extensions.DependencyInjection;
+using System.Net;
+
+namespace StressTests;
+
+/// <summary>
+/// Stress tests for HybridCacheHttpHandler using xUnit + dotMemoryUnit.
+/// 
+/// Prerequisites:
+/// 1. Start infrastructure: cd stress-tests/AppHost && dotnet run
+/// 2. Run tests: dotnet test
+/// 
+/// dotMemoryUnit will automatically capture memory snapshots and analyze for leaks.
+/// </summary>
+public class CacheStressTests : IDisposable
+{
+    private readonly HttpClient _cachedClient;
+    private readonly HttpClient _uncachedClient;
+    private readonly string _targetUrl;
+
+    public CacheStressTests()
+    {
+        _targetUrl = Environment.GetEnvironmentVariable("TARGET_URL") ?? "http://localhost:5001";
+
+        // Setup HybridCache with Redis L2
+        var services = new ServiceCollection();
+        
+        // Add Redis (connection string from environment or default)
+        var redisConnection = Environment.GetEnvironmentVariable("ConnectionStrings__redis") ?? "localhost:6379";
+        services.AddStackExchangeRedisCache(options =>
+        {
+            options.Configuration = redisConnection;
+            options.InstanceName = "StressTests:";
+        });
+
+        // Add HybridCache
+        services.AddHybridCache(options =>
+        {
+            options.MaximumPayloadBytes = 10 * 1024 * 1024; // 10MB
+            options.MaximumKeyLength = 1024;
+            options.DefaultEntryOptions = new()
+            {
+                Expiration = TimeSpan.FromMinutes(5),
+                LocalCacheExpiration = TimeSpan.FromMinutes(1)
+            };
+        });
+
+        services.AddLogging();
+        var serviceProvider = services.BuildServiceProvider();
+        var hybridCache = serviceProvider.GetRequiredService<HybridCache>();
+
+        // Create cached client
+        var cacheHandler = new HybridCacheHttpHandler(
+            hybridCache,
+            TimeProvider.System,
+            new HybridCacheHttpHandlerOptions
+            {
+                DefaultCacheDuration = TimeSpan.FromMinutes(5),
+                MaxCacheableContentSize = 10 * 1024 * 1024,
+                CompressionThreshold = 1024,
+                IncludeDiagnosticHeaders = true
+            },
+            serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HybridCacheHttpHandler>>())
+        {
+            InnerHandler = new SocketsHttpHandler
+            {
+                AutomaticDecompression = DecompressionMethods.All
+            }
+        };
+
+        _cachedClient = new HttpClient(cacheHandler) { BaseAddress = new Uri(_targetUrl) };
+        _uncachedClient = new HttpClient { BaseAddress = new Uri(_targetUrl) };
+    }
+
+    [Fact]
+    [DotMemoryUnit(CollectAllocations = true, FailIfRunWithoutSupport = false)]
+    public async Task CacheStampede_ThunderingHerd_OnlyOneBackendCall()
+    {
+        // Arrange
+        var url = "/api/delay/100?size=1024";
+        var concurrency = 100;
+
+        // Take baseline memory snapshot
+        var memBefore = GC.GetTotalMemory(true);
+        dotMemory.Check(memory =>
+        {
+            Console.WriteLine($"Baseline memory: {FormatBytes(memory.GetObjects(where => where.Namespace.Like("DamianH.*")).ObjectsCount)}");
+        });
+
+        // Act - Fire 100 concurrent requests to same endpoint
+        var tasks = Enumerable.Range(0, concurrency)
+            .Select(async i =>
+            {
+                var response = await _cachedClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+                var content = await response.Content.ReadAsStringAsync();
+                return response.Headers.Age?.TotalSeconds > 0 || response.Headers.Contains("X-Cache-Status");
+            })
+            .ToArray();
+
+        var cacheHits = await Task.WhenAll(tasks);
+
+        // Take after-test memory snapshot
+        var memAfter = GC.GetTotalMemory(false);
+        dotMemory.Check(memory =>
+        {
+            Console.WriteLine($"After test memory: {FormatBytes(memory.GetObjects(where => where.Namespace.Like("DamianH.*")).ObjectsCount)}");
+        });
+
+        // Assert
+        var hitRatio = cacheHits.Count(x => x) / (double)concurrency;
+        Assert.True(hitRatio > 0.95, $"Cache hit ratio should be >95%, was {hitRatio:P1}");
+
+        // Memory assertion - no significant growth
+        var memGrowth = memAfter - memBefore;
+        Assert.True(memGrowth < 10 * 1024 * 1024, $"Memory growth should be <10MB, was {FormatBytes(memGrowth)}");
+
+        Console.WriteLine($"✓ Cache Hit Ratio: {hitRatio:P1}");
+        Console.WriteLine($"✓ Memory Growth: {FormatBytes(memGrowth)}");
+    }
+
+    [Fact(Skip = "Long-running test (5 minutes) - run explicitly")]
+    [DotMemoryUnit(CollectAllocations = true, FailIfRunWithoutSupport = false)]
+    public async Task SustainedLoad_5Minutes_NoMemoryLeak()
+    {
+        // Arrange
+        var duration = TimeSpan.FromMinutes(5);
+        var concurrentClients = 20;
+        var endpoints = new[]
+        {
+            "/api/cacheable/1?size=1024",
+            "/api/cacheable/2?size=10240",
+            "/api/sizes/small",
+            "/api/sizes/medium"
+        };
+
+        var memStart = GC.GetTotalMemory(true);
+        dotMemory.Check(memory => Console.WriteLine("Baseline snapshot taken"));
+
+        var cts = new CancellationTokenSource(duration);
+        var requestCount = 0;
+        var errorCount = 0;
+
+        // Act - Sustained load
+        var tasks = Enumerable.Range(0, concurrentClients)
+            .Select(async workerId =>
+            {
+                var random = new Random(workerId);
+                while (!cts.Token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        var endpoint = endpoints[random.Next(endpoints.Length)];
+                        var response = await _cachedClient.GetAsync(endpoint, cts.Token);
+                        response.EnsureSuccessStatusCode();
+                        Interlocked.Increment(ref requestCount);
+
+                        // Take periodic snapshots
+                        if (requestCount % 10000 == 0)
+                        {
+                            dotMemory.Check(memory => 
+                                Console.WriteLine($"Snapshot at {requestCount:N0} requests"));
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch
+                    {
+                        Interlocked.Increment(ref errorCount);
+                    }
+
+                    await Task.Delay(50, cts.Token); // 20 req/sec per client = 400 req/sec total
+                }
+            })
+            .ToArray();
+
+        await Task.WhenAll(tasks);
+
+        // Take final snapshot
+        var memEnd = GC.GetTotalMemory(false);
+        dotMemory.Check(memory => Console.WriteLine("Final snapshot taken"));
+
+        // Assert
+        var memGrowth = memEnd - memStart;
+        var errorRate = errorCount / (double)requestCount;
+
+        Assert.True(errorRate < 0.01, $"Error rate should be <1%, was {errorRate:P1}");
+        Assert.True(memGrowth < 50 * 1024 * 1024, $"Memory growth should be <50MB for 5min test, was {FormatBytes(memGrowth)}");
+
+        Console.WriteLine($"✓ Total Requests: {requestCount:N0}");
+        Console.WriteLine($"✓ Error Rate: {errorRate:P2}");
+        Console.WriteLine($"✓ Memory Growth: {FormatBytes(memGrowth)}");
+        Console.WriteLine($"✓ Throughput: {requestCount / duration.TotalSeconds:F1} req/s");
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len /= 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+
+    public void Dispose()
+    {
+        _cachedClient?.Dispose();
+        _uncachedClient?.Dispose();
+    }
+}

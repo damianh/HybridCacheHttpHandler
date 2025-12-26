@@ -16,6 +16,7 @@
   <Folder Name="/stress-tests/">
     <Project Path="stress-tests/AppHost/AppHost.csproj" />
     <Project Path="stress-tests/ServiceDefaults/ServiceDefaults.csproj" />
+    <Project Path="stress-tests/StressTests/StressTests.csproj" />
     <Project Path="stress-tests/Target/Target.csproj" />
     <Project Path="stress-tests/Runner/Runner.csproj" />
   </Folder>
