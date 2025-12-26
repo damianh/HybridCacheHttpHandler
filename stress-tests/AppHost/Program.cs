@@ -9,4 +9,9 @@ var targetApp = builder.AddProject<Projects.Target>("target")
     .WithHttpEndpoint(port: 5001, name: "target-http")
     .WithHttpsEndpoint(port: 5002, name: "target-https");
 
+// Runner console application (interactive stress tests)
+var runner = builder.AddProject<Projects.Runner>("runner")
+    .WithReference(redis)
+    .WithEnvironment("TARGET_URL", targetApp.GetEndpoint("target-http"));
+
 builder.Build().Run();
