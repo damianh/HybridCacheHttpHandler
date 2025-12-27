@@ -1,10 +1,10 @@
 using DamianH.HybridCacheHttpHandler;
 using JetBrains.dotMemoryUnit;
 using Microsoft.Extensions.Caching.Hybrid;
-using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Caching.StackExchangeRedis;
 using Microsoft.Extensions.DependencyInjection;
 using System.Net;
+using Microsoft.Extensions.Logging;
+using Shouldly;
 
 namespace StressTests;
 
@@ -19,13 +19,13 @@ namespace StressTests;
 /// </summary>
 public class CacheStressTests : IDisposable
 {
+    private readonly CancellationToken _ct = TestContext.Current.CancellationToken;
     private readonly HttpClient _cachedClient;
     private readonly HttpClient _uncachedClient;
-    private readonly string _targetUrl;
 
     public CacheStressTests()
     {
-        _targetUrl = Environment.GetEnvironmentVariable("TARGET_URL") ?? "http://localhost:5001";
+        var targetUrl = new Uri(Environment.GetEnvironmentVariable("TARGET_URL") ?? "http://localhost:5001");
 
         // Setup HybridCache with Redis L2
         var services = new ServiceCollection();
@@ -65,7 +65,7 @@ public class CacheStressTests : IDisposable
                 CompressionThreshold = 1024,
                 IncludeDiagnosticHeaders = true
             },
-            serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HybridCacheHttpHandler>>())
+            serviceProvider.GetRequiredService<ILogger<HybridCacheHttpHandler>>())
         {
             InnerHandler = new SocketsHttpHandler
             {
@@ -73,8 +73,14 @@ public class CacheStressTests : IDisposable
             }
         };
 
-        _cachedClient = new HttpClient(cacheHandler) { BaseAddress = new Uri(_targetUrl) };
-        _uncachedClient = new HttpClient { BaseAddress = new Uri(_targetUrl) };
+        _cachedClient = new HttpClient(cacheHandler)
+        {
+            BaseAddress = targetUrl
+        };
+        _uncachedClient = new HttpClient
+        {
+            BaseAddress = targetUrl
+        };
     }
 
     [Fact]
@@ -82,8 +88,8 @@ public class CacheStressTests : IDisposable
     public async Task CacheStampede_ThunderingHerd_OnlyOneBackendCall()
     {
         // Arrange
-        var url = "/api/delay/100?size=1024";
-        var concurrency = 100;
+        const string Url = "/api/delay/100?size=1024";
+        const int Concurrency = 100;
 
         // Take baseline memory snapshot
         var memBefore = GC.GetTotalMemory(true);
@@ -91,7 +97,7 @@ public class CacheStressTests : IDisposable
         // Try to take dotMemory snapshot if available
         try
         {
-            dotMemory.Check(memory =>
+            dotMemory.Check(_ =>
             {
                 Console.WriteLine($"[dotMemoryUnit] Baseline snapshot taken");
             });
@@ -102,25 +108,27 @@ public class CacheStressTests : IDisposable
         }
 
         // Act - Fire 100 concurrent requests to same endpoint
-        var tasks = Enumerable.Range(0, concurrency)
+        var tasks = Enumerable.Range(0, Concurrency)
             .Select(async i =>
             {
-                var response = await _cachedClient.GetAsync(url);
+                var response = await _cachedClient.GetAsync(Url, _ct);
                 response.EnsureSuccessStatusCode();
-                var content = await response.Content.ReadAsStringAsync();
+                var content = await response.Content.ReadAsStringAsync(_ct);
                 
                 // Check for cache hit indicators
-                var hasAge = response.Headers.Age != null && response.Headers.Age.Value.TotalSeconds > 0;
-                var hasCacheStatus = response.Headers.TryGetValues("X-Cache-Status", out var _);
+                var hasAge = response.Headers.Age is { TotalSeconds: > 0 };
+                var hasCacheStatus = response.Headers.TryGetValues("X-Cache-Status", out _);
                 var isCacheHit = hasAge || hasCacheStatus;
                 
                 // Debug first few responses
-                if (i < 3)
+                if (i >= 3)
                 {
-                    var cacheStatusValue = response.Headers.TryGetValues("X-Cache-Status", out var values) ? values.FirstOrDefault() : "none";
-                    Console.WriteLine($"  Request {i}: Age={response.Headers.Age?.TotalSeconds ?? 0}s, X-Cache-Status={cacheStatusValue}, CacheHit={isCacheHit}");
+                    return isCacheHit;
                 }
-                
+
+                var cacheStatusValue = response.Headers.TryGetValues("X-Cache-Status", out var values) ? values.FirstOrDefault() : "none";
+                Console.WriteLine($"  Request {i}: Age={response.Headers.Age?.TotalSeconds ?? 0}s, X-Cache-Status={cacheStatusValue}, CacheHit={isCacheHit}");
+
                 return isCacheHit;
             })
             .ToArray();
@@ -132,7 +140,7 @@ public class CacheStressTests : IDisposable
         
         try
         {
-            dotMemory.Check(memory =>
+            dotMemory.Check(_ =>
             {
                 Console.WriteLine($"[dotMemoryUnit] Final snapshot taken");
             });
@@ -143,12 +151,12 @@ public class CacheStressTests : IDisposable
         }
 
         // Assert
-        var hitRatio = cacheHits.Count(x => x) / (double)concurrency;
-        Assert.True(hitRatio > 0.95, $"Cache hit ratio should be >95%, was {hitRatio:P1}");
+        var hitRatio = cacheHits.Count(x => x) / (double)Concurrency;
+        hitRatio.ShouldBeGreaterThan(0.95, $"Cache hit ratio should be >95%, was {hitRatio:P1}");
 
         // Memory assertion - no significant growth
         var memGrowth = memAfter - memBefore;
-        Assert.True(memGrowth < 10 * 1024 * 1024, $"Memory growth should be <10MB, was {FormatBytes(memGrowth)}");
+        memGrowth.ShouldBeLessThan(10 * 1024 * 1024, $"Memory growth should be <10MB, was {FormatBytes(memGrowth)}");
 
         Console.WriteLine($"✓ Cache Hit Ratio: {hitRatio:P1}");
         Console.WriteLine($"✓ Memory Growth: {FormatBytes(memGrowth)}");
@@ -173,7 +181,7 @@ public class CacheStressTests : IDisposable
         
         try
         {
-            dotMemory.Check(memory => Console.WriteLine("[dotMemoryUnit] Baseline snapshot taken"));
+            dotMemory.Check(_ => Console.WriteLine("[dotMemoryUnit] Baseline snapshot taken"));
         }
         catch (Exception)
         {
@@ -233,7 +241,7 @@ public class CacheStressTests : IDisposable
         
         try
         {
-            dotMemory.Check(memory => Console.WriteLine("[dotMemoryUnit] Final snapshot taken"));
+            dotMemory.Check(_ => Console.WriteLine("[dotMemoryUnit] Final snapshot taken"));
         }
         catch (Exception)
         {
@@ -244,8 +252,8 @@ public class CacheStressTests : IDisposable
         var memGrowth = memEnd - memStart;
         var errorRate = errorCount / (double)requestCount;
 
-        Assert.True(errorRate < 0.01, $"Error rate should be <1%, was {errorRate:P1}");
-        Assert.True(memGrowth < 50 * 1024 * 1024, $"Memory growth should be <50MB for 5min test, was {FormatBytes(memGrowth)}");
+        errorRate.ShouldBeLessThan(0.01, $"Error rate should be <1%, was {errorRate:P1}");
+        memGrowth.ShouldBeLessThan(50 * 1024 * 1024, $"Memory growth should be <50MB for 5min test, was {FormatBytes(memGrowth)}");
 
         Console.WriteLine($"✓ Total Requests: {requestCount:N0}");
         Console.WriteLine($"✓ Error Rate: {errorRate:P2}");
@@ -257,7 +265,7 @@ public class CacheStressTests : IDisposable
     {
         string[] sizes = { "B", "KB", "MB", "GB" };
         double len = bytes;
-        int order = 0;
+        var order = 0;
         while (len >= 1024 && order < sizes.Length - 1)
         {
             order++;
