@@ -169,8 +169,8 @@ public class ClientConditionalTests
             response.Headers.Date = responseDate;
         }));
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -616,17 +616,24 @@ public class ClientConditionalTests
         return response;
     }
 
-    private sealed class RecordingHybridCache : HybridCache
+    private sealed class RecordingHybridCache : HybridCache, IDisposable
     {
-        private readonly HybridCache _inner = CreateInnerCache();
+        private readonly ServiceProvider _serviceProvider;
+        private readonly HybridCache _inner;
 
         public List<CachedHttpMetadata> StoredMetadata { get; } = [];
 
-        private static HybridCache CreateInnerCache()
+        public RecordingHybridCache()
+        {
+            _serviceProvider = CreateServiceProvider();
+            _inner = _serviceProvider.GetRequiredService<HybridCache>();
+        }
+
+        private static ServiceProvider CreateServiceProvider()
         {
             var services = new ServiceCollection();
             services.AddHybridCache();
-            return services.BuildServiceProvider().GetRequiredService<HybridCache>();
+            return services.BuildServiceProvider();
         }
 
         public override ValueTask<T> GetOrCreateAsync<TState, T>(
@@ -668,6 +675,11 @@ public class ClientConditionalTests
 
         public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default) =>
             _inner.RemoveByTagAsync(tags, cancellationToken);
+
+        public void Dispose()
+        {
+            _serviceProvider.Dispose();
+        }
     }
 
     private sealed class SingleResponseMessageHandler(HttpResponseMessage response) : HttpMessageHandler
