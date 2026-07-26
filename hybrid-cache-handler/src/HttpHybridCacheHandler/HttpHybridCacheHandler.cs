@@ -153,9 +153,25 @@ public class HttpHybridCacheHandler : DelegatingHandler
         // Handle only-if-cached
         if (requestCacheControl?.OnlyIfCached == true)
         {
-            var cacheKey = GenerateVaryAwareCacheKey(request);
-            var onlyIfCachedRequestUriTag = GetUriTag(request.RequestUri);
-            try
+            var cacheKey = GenerateVaryAwareCacheKey(request, includeRange: hasRangeRequest);
+            var completeResponseCacheKey = hasRangeRequest ? GenerateVaryAwareCacheKey(request) : null;
+
+            var cachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
+                cacheKey,
+                _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
+                cancellationToken: ct
+            );
+
+            if (cachedEntry == null && completeResponseCacheKey != null)
+            {
+                cachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
+                    completeResponseCacheKey,
+                    _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
+                    cancellationToken: ct
+                );
+            }
+
+            if (cachedEntry != null)
             {
                 if (hasRangeRequest &&
                     await TryServeRangeFromCachedMetadataAsync(cachedEntry, requestedRange, request, ct) is { } cachedRangeResponse)
@@ -208,12 +224,36 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var mustRevalidate = requestCacheControl?.NoCache == true
             || requestCacheControl?.MaxAge == TimeSpan.Zero;
 
-        var cacheKey2 = GenerateVaryAwareCacheKey(request);
+        var cacheKey2 = GenerateVaryAwareCacheKey(request, includeRange: hasRangeRequest);
+        var completeResponseKey = hasRangeRequest ? GenerateVaryAwareCacheKey(request) : null;
         var requestUriTag = GetUriTag(request.RequestUri);
         HttpResponseMessage? uncachedResponse = null;
         RawHeaderSnapshot? uncachedRawHeaders = null;
 
-        CachedHttpEntry? cachedEntry;
+        if (hasRangeRequest && completeResponseKey != null)
+        {
+            var completeResponseCandidate = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
+                completeResponseKey,
+                _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
+                cancellationToken: ct
+            );
+
+            if (completeResponseCandidate != null &&
+                !mustRevalidate &&
+                !completeResponseCandidate.NoCache &&
+                IsFresh(completeResponseCandidate, request))
+            {
+                var cachedRangeResponse = await TryServeRangeFromCachedMetadataAsync(completeResponseCandidate, requestedRange, request, ct);
+                if (cachedRangeResponse != null)
+                {
+                    CacheHits.Add(1, CreateMetricTags(request));
+                    AddDiagnosticHeaders(cachedRangeResponse, DiagnosticHeaders.HitFresh, completeResponseCandidate);
+                    return cachedRangeResponse;
+                }
+            }
+        }
+
+        CachedHttpMetadata? cachedResponse;
         try
         {
             cachedEntry = await _cache.GetOrCreateAsync(
@@ -997,6 +1037,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             }
 
             var mergedHeadResponse = BuildMergedHeadResponse(headResponse, updated, request);
+            headResponse.Dispose();
             AddDiagnosticHeaders(mergedHeadResponse, DiagnosticHeaders.ByPassMethod);
             return mergedHeadResponse;
         }

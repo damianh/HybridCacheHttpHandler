@@ -383,4 +383,61 @@ public class OptionalConformanceTests
         mockHandler.RequestCount.ShouldBe(1);
         response2.StatusCode.ShouldBe(HttpStatusCode.PartialContent);
     }
+
+    [Fact]
+    public async Task Different_partial_ranges_use_separate_cache_entries()
+    {
+        var mockHandler = new MockHttpMessageHandler(req =>
+        {
+            var range = req.Headers.Range?.Ranges.SingleOrDefault();
+
+            if (range?.From == 0 && range.To == 1)
+            {
+                return Task.FromResult(CreatePartialResponse("ab", 0, 1, 6));
+            }
+
+            if (range?.From == 2 && range.To == 3)
+            {
+                return Task.FromResult(CreatePartialResponse("cd", 2, 3, 6));
+            }
+
+            throw new InvalidOperationException("Unexpected range request.");
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/range-fragments");
+        request1.Headers.Range = new RangeHeaderValue(0, 1);
+        await client.SendAsync(request1, _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/range-fragments");
+        request2.Headers.Range = new RangeHeaderValue(2, 3);
+        var response2 = await client.SendAsync(request2, _ct);
+        var body2 = await response2.Content.ReadAsStringAsync(_ct);
+
+        var request3 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/range-fragments");
+        request3.Headers.Range = new RangeHeaderValue(0, 1);
+        var response3 = await client.SendAsync(request3, _ct);
+        var body3 = await response3.Content.ReadAsStringAsync(_ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
+        response2.StatusCode.ShouldBe(HttpStatusCode.PartialContent);
+        response3.StatusCode.ShouldBe(HttpStatusCode.PartialContent);
+        body2.ShouldBe("cd");
+        body3.ShouldBe("ab");
+    }
+
+    private static HttpResponseMessage CreatePartialResponse(string body, long from, long to, long totalLength)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.PartialContent)
+        {
+            Content = new StringContent(body)
+        };
+        response.Headers.TryAddWithoutValidation("Cache-Control", "max-age=3600");
+        response.Content.Headers.ContentRange = new ContentRangeHeaderValue(from, to, totalLength);
+        response.Headers.AcceptRanges.Add("bytes");
+        return response;
+    }
+
 }
