@@ -153,11 +153,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
         // Handle only-if-cached
         if (requestCacheControl?.OnlyIfCached == true)
         {
-            var cacheMethod = request.Method == HttpMethod.Head ? HttpMethod.Get : null;
-            var cacheKey = GenerateVaryAwareCacheKey(request, cacheMethod, includeRange: hasRangeRequest);
-            var completeResponseCacheKey = hasRangeRequest
-                ? GenerateVaryAwareCacheKey(request, cacheMethod)
-                : null;
+            var cacheKey = GenerateVaryAwareCacheKey(request, includeRange: hasRangeRequest);
+            var completeResponseCacheKey = hasRangeRequest ? GenerateVaryAwareCacheKey(request) : null;
 
             var cachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
                 cacheKey,
@@ -1042,6 +1039,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             }
 
             var mergedHeadResponse = BuildMergedHeadResponse(headResponse, updated, request);
+            headResponse.Dispose();
             AddDiagnosticHeaders(mergedHeadResponse, DiagnosticHeaders.ByPassMethod);
             return mergedHeadResponse;
         }
