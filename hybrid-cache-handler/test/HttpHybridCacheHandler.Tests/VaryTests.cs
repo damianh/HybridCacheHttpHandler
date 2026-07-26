@@ -3,6 +3,7 @@
 
 using System.Globalization;
 using System.Net;
+using Microsoft.Extensions.Caching.Hybrid;
 
 namespace DamianH.HttpHybridCacheHandler;
 
@@ -394,6 +395,55 @@ public class VaryTests
     }
 
     [Fact]
+    public void SelectVariant_ignores_duplicate_stored_Vary_headers_when_scoring_specificity()
+    {
+        var olderSpecificVariant = new CachedHttpMetadata
+        {
+            StatusCode = (int)HttpStatusCode.OK,
+            ContentKey = "specific",
+            ContentLength = 0,
+            Headers = new Dictionary<string, string[]>(),
+            ContentHeaders = new Dictionary<string, string[]>(),
+            CachedAt = DateTimeOffset.UnixEpoch,
+            VaryHeaders = ["Foo", "Bar"],
+            VaryHeaderValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Foo"] = "1",
+                ["Bar"] = "2"
+            }
+        };
+
+        var newerDuplicateVariant = new CachedHttpMetadata
+        {
+            StatusCode = (int)HttpStatusCode.OK,
+            ContentKey = "duplicate",
+            ContentLength = 0,
+            Headers = new Dictionary<string, string[]>(),
+            ContentHeaders = new Dictionary<string, string[]>(),
+            CachedAt = DateTimeOffset.UnixEpoch.AddMinutes(1),
+            VaryHeaders = ["Foo", "Foo"],
+            VaryHeaderValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Foo"] = "1"
+            }
+        };
+
+        var entry = new CachedHttpEntry
+        {
+            Variants = [newerDuplicateVariant, olderSpecificVariant]
+        };
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request.Headers.Add("Foo", "1");
+        request.Headers.Add("Bar", "2");
+
+        var selected = VaryMatcher.SelectVariant(entry, request);
+
+        selected.ShouldNotBeNull();
+        selected.ContentKey.ShouldBe("specific");
+    }
+
+    [Fact]
     public async Task Case_insensitive_Vary_header_matching()
     {
 
@@ -609,5 +659,140 @@ public class VaryTests
 
         (await response3.Content.ReadAsStringAsync(_ct)).ShouldBe("response_de");
         requestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Variant_miss_write_merges_against_latest_cached_entry()
+    {
+        var initialVariant = CreateStoredFooVariant("1", DateTimeOffset.UnixEpoch);
+        var concurrentVariant = CreateStoredFooVariant("3", DateTimeOffset.UnixEpoch.AddSeconds(1));
+        var cache = new SequencedEntryHybridCache(
+            new CachedHttpEntry { Variants = [initialVariant] },
+            new CachedHttpEntry { Variants = [initialVariant, concurrentVariant] });
+
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            var foo = request.Headers.TryGetValues("Foo", out var values)
+                ? string.Join(string.Empty, values)
+                : "missing";
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($"response_{foo}")
+            };
+            response.Headers.Add("Cache-Control", "max-age=3600");
+            response.Headers.Add("Vary", "Foo");
+            return Task.FromResult(response);
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler, customCache: cache);
+        using var client = fixture.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request.Headers.Add("Foo", "2");
+        var response = await client.SendAsync(request, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        cache.LastStoredMetadataEntry.ShouldNotBeNull();
+
+        var fooValues = cache.LastStoredMetadataEntry.Variants
+            .Select(v => v.VaryHeaderValues?["Foo"])
+            .Where(v => v != null)
+            .Select(v => v!)
+            .OrderBy(v => v)
+            .ToArray();
+
+        fooValues.ShouldBe(["1", "2", "3"]);
+    }
+
+    private static CachedHttpMetadata CreateStoredFooVariant(string fooValue, DateTimeOffset cachedAt) =>
+        new()
+        {
+            StatusCode = (int)HttpStatusCode.OK,
+            ContentKey = $"content-{fooValue}",
+            ContentLength = 0,
+            Headers = new Dictionary<string, string[]>(),
+            ContentHeaders = new Dictionary<string, string[]>(),
+            CachedAt = cachedAt,
+            MaxAge = TimeSpan.FromHours(1),
+            VaryHeaders = ["Foo"],
+            VaryHeaderValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Foo"] = fooValue
+            }
+        };
+
+    private sealed class SequencedEntryHybridCache(
+        CachedHttpEntry initialEntry,
+        CachedHttpEntry latestEntry) : HybridCache
+    {
+        private readonly Dictionary<string, object?> _store = new(StringComparer.Ordinal);
+        private int _metadataReadCount;
+
+        public CachedHttpEntry? LastStoredMetadataEntry { get; private set; }
+
+        public override async ValueTask<T> GetOrCreateAsync<TState, T>(
+            string key,
+            TState state,
+            Func<TState, Ct, ValueTask<T>> factory,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default)
+        {
+            if (typeof(T) == typeof(CachedHttpEntry))
+            {
+                var readCount = Interlocked.Increment(ref _metadataReadCount);
+                var entry = readCount == 1 ? initialEntry : latestEntry;
+                return (T)(object)entry;
+            }
+
+            if (_store.TryGetValue(key, out var stored))
+            {
+                return (T)stored!;
+            }
+
+            var created = await factory(state, cancellationToken);
+            _store[key] = created;
+            return created;
+        }
+
+        public override ValueTask SetAsync<T>(
+            string key,
+            T value,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default)
+        {
+            if (value is CachedHttpEntry metadataEntry)
+            {
+                LastStoredMetadataEntry = metadataEntry;
+            }
+            else
+            {
+                _store[key] = value;
+            }
+
+            return ValueTask.CompletedTask;
+        }
+
+        public override ValueTask RemoveAsync(string key, Ct cancellationToken = default)
+        {
+            _store.Remove(key);
+            return ValueTask.CompletedTask;
+        }
+
+        public override ValueTask RemoveAsync(IEnumerable<string> keys, Ct cancellationToken = default)
+        {
+            foreach (var key in keys)
+            {
+                _store.Remove(key);
+            }
+
+            return ValueTask.CompletedTask;
+        }
+
+        public override ValueTask RemoveByTagAsync(string tag, Ct cancellationToken = default) => ValueTask.CompletedTask;
+
+        public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default) => ValueTask.CompletedTask;
     }
 }

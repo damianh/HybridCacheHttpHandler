@@ -139,8 +139,14 @@ internal static class VaryMatcher
         var acceptLanguageMatchRank = 0;
         var acceptLanguageWeight = 0d;
 
+        var seenVaryHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var varyHeader in variant.VaryHeaders)
         {
+            if (!seenVaryHeaders.Add(varyHeader))
+            {
+                continue;
+            }
+
             var storedValue = variant.VaryHeaderValues.TryGetValue(varyHeader, out var value)
                 ? value
                 : string.Empty;

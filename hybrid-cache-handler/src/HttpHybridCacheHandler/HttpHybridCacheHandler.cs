@@ -129,7 +129,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 if (onlyIfCachedEntry != null)
                 {
                     var cachedVariant = VaryMatcher.SelectVariant(onlyIfCachedEntry, request);
-                    if (cachedVariant != null)
+                    if (cachedVariant != null && IsUsableForOnlyIfCached(cachedVariant, request))
                     {
                         if (TryCreateConditionalNotModifiedResponse(request, cachedVariant, out var notModifiedResponse))
                         {
@@ -285,10 +285,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     var freshVariant = await SerializeResponse(variantMissResponse, variantMissRawHeaders, request);
                     if (freshVariant != null)
                     {
-                        var updatedEntry = UpsertVariant(cachedEntry, freshVariant);
                         try
                         {
-                            await _cache.SetAsync(cacheKey2, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
+                            await SetMergedEntryAsync(
+                                cacheKey2,
+                                requestUriTag,
+                                cachedEntry,
+                                current => UpsertVariant(current, freshVariant),
+                                ct);
                         }
                         catch (Exception ex)
                         {
@@ -321,10 +325,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     }
 
                     var updatedVariant = UpdateCachedEntry(cachedResponse, uncachedResponse);
-                    var updatedEntry = ReplaceVariant(cachedEntry, cachedResponse, updatedVariant);
                     try
                     {
-                        await _cache.SetAsync(cacheKey2, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
+                        await SetMergedEntryAsync(
+                            cacheKey2,
+                            requestUriTag,
+                            cachedEntry,
+                            current => ReplaceVariant(current, cachedResponse, updatedVariant),
+                            ct);
                     }
                     catch (Exception ex)
                     {
@@ -507,10 +515,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
                 // Update cached entry with new metadata from 304 response
                 var updatedVariant = UpdateCachedEntry(cachedResponse, uncachedResponse);
-                var updatedEntry = ReplaceVariant(cachedEntry, cachedResponse, updatedVariant);
                 try
                 {
-                    await _cache.SetAsync(cacheKey2, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
+                    await SetMergedEntryAsync(
+                        cacheKey2,
+                        requestUriTag,
+                        cachedEntry,
+                        current => ReplaceVariant(current, cachedResponse, updatedVariant),
+                        ct);
                 }
                 catch (Exception ex)
                 {
@@ -545,10 +557,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 var freshResponse = await SerializeResponse(uncachedResponse, staleValidationRawHeaders, staleValidationRequest);
                 if (freshResponse != null)
                 {
-                    var updatedEntry = UpsertVariant(cachedEntry, freshResponse);
                     try
                     {
-                        await _cache.SetAsync(cacheKey2, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
+                        await SetMergedEntryAsync(
+                            cacheKey2,
+                            requestUriTag,
+                            cachedEntry,
+                            current => UpsertVariant(current, freshResponse),
+                            ct);
                     }
                     catch (Exception ex)
                     {
@@ -565,15 +581,12 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 {
                     try
                     {
-                        var updatedEntry = RemoveVariant(cachedEntry, cachedResponse);
-                        if (updatedEntry.Variants.Count == 0)
-                        {
-                            await _cache.RemoveAsync(cacheKey2, ct);
-                        }
-                        else
-                        {
-                            await _cache.SetAsync(cacheKey2, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
-                        }
+                        await SetMergedEntryAsync(
+                            cacheKey2,
+                            requestUriTag,
+                            cachedEntry,
+                            current => RemoveVariant(current, cachedResponse),
+                            ct);
                     }
                     catch (Exception ex)
                     {
@@ -1152,6 +1165,16 @@ public class HttpHybridCacheHandler : DelegatingHandler
         return $"httpcache:uri:{builder.Uri.AbsoluteUri}";
     }
 
+    private bool IsUsableForOnlyIfCached(CachedHttpMetadata cached, HttpRequestMessage request)
+    {
+        if (IsFresh(cached, request))
+        {
+            return true;
+        }
+
+        return CalculateCurrentAge(cached) <= CalculateSemanticLifetime(cached);
+    }
+
     private bool IsFresh(CachedHttpMetadata cached, HttpRequestMessage request)
     {
         var freshnessLifetime = CalculateFreshnessLifetime(cached);
@@ -1310,19 +1333,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
     private TimeSpan CalculateEntryLifetime(CachedHttpMetadata metadata)
     {
-        var freshness = CalculateFreshnessLifetime(metadata) ?? TimeSpan.Zero;
-
-        // Add stale extension windows so entries survive long enough for the handler
-        // to serve stale responses when appropriate.
-        var total = freshness;
-        if (metadata.StaleWhileRevalidate.HasValue)
-        {
-            total += metadata.StaleWhileRevalidate.Value;
-        }
-        if (metadata.StaleIfError.HasValue)
-        {
-            total += metadata.StaleIfError.Value;
-        }
+        var total = CalculateSemanticLifetime(metadata);
 
         // Ensure a minimum TTL so that very short-lived entries don't disappear
         // before the handler can check freshness on the next request.
@@ -1334,12 +1345,52 @@ public class HttpHybridCacheHandler : DelegatingHandler
         return total;
     }
 
+    private TimeSpan CalculateSemanticLifetime(CachedHttpMetadata metadata)
+    {
+        var freshness = CalculateFreshnessLifetime(metadata) ?? TimeSpan.Zero;
+
+        var total = freshness;
+        if (metadata.StaleWhileRevalidate.HasValue)
+        {
+            total += metadata.StaleWhileRevalidate.Value;
+        }
+        if (metadata.StaleIfError.HasValue)
+        {
+            total += metadata.StaleIfError.Value;
+        }
+
+        return total;
+    }
+
     private async Task<CachedHttpEntry?> GetCacheEntryAsync(string cacheKey, Ct cancellationToken) =>
         await _cache.GetOrCreateAsync<CachedHttpEntry?>(
             cacheKey,
             _ => ValueTask.FromResult<CachedHttpEntry?>(null),
             cancellationToken: cancellationToken
         );
+
+    private async Task SetMergedEntryAsync(
+        string cacheKey,
+        string? requestUriTag,
+        CachedHttpEntry fallbackEntry,
+        Func<CachedHttpEntry, CachedHttpEntry> update,
+        Ct cancellationToken)
+    {
+        var latestEntry = await GetCacheEntryAsync(cacheKey, cancellationToken) ?? fallbackEntry;
+        var updatedEntry = update(latestEntry);
+        if (updatedEntry.Variants.Count == 0)
+        {
+            await _cache.RemoveAsync(cacheKey, cancellationToken);
+            return;
+        }
+
+        await _cache.SetAsync(
+            cacheKey,
+            updatedEntry,
+            CreateCacheEntryOptions(updatedEntry),
+            tags: requestUriTag == null ? null : [requestUriTag],
+            cancellationToken: cancellationToken);
+    }
 
     private CachedHttpEntry UpsertVariant(CachedHttpEntry entry, CachedHttpMetadata variant)
     {

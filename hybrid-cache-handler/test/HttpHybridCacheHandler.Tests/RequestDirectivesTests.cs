@@ -243,6 +243,54 @@ public class RequestDirectivesTests
     }
 
     [Fact]
+    public async Task Only_if_cached_returns_504_when_matching_variant_is_past_effective_lifetime()
+    {
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            var foo = request.Headers.TryGetValues("Foo", out var values)
+                ? string.Join(string.Empty, values)
+                : "missing";
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($"response_{foo}")
+            };
+            response.Headers.Add("Cache-Control", foo == "short" ? "max-age=1" : "max-age=3600");
+            response.Headers.Add("Vary", "Foo");
+            return Task.FromResult(response);
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        var shortRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        shortRequest.Headers.Add("Foo", "short");
+        await client.SendAsync(shortRequest, _ct);
+
+        var longRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        longRequest.Headers.Add("Foo", "long");
+        await client.SendAsync(longRequest, _ct);
+
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var staleOnlyIfCached = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        staleOnlyIfCached.Headers.Add("Foo", "short");
+        staleOnlyIfCached.Headers.Add("Cache-Control", "only-if-cached");
+        var staleResponse = await client.SendAsync(staleOnlyIfCached, _ct);
+
+        staleResponse.StatusCode.ShouldBe(HttpStatusCode.GatewayTimeout);
+        mockHandler.RequestCount.ShouldBe(2);
+
+        var freshOnlyIfCached = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        freshOnlyIfCached.Headers.Add("Foo", "long");
+        freshOnlyIfCached.Headers.Add("Cache-Control", "only-if-cached");
+        var freshResponse = await client.SendAsync(freshOnlyIfCached, _ct);
+
+        freshResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await freshResponse.Content.ReadAsStringAsync(_ct)).ShouldBe("response_long");
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Only_if_cached_returns_504_if_not_in_cache()
     {
         var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
