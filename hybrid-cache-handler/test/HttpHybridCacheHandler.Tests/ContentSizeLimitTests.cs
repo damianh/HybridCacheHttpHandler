@@ -190,6 +190,32 @@ public class ContentSizeLimitTests
     }
 
     [Fact]
+    public async Task Response_between_1MiB_and_10MiB_is_cached_with_default_settings()
+    {
+        // 2 MiB — above HybridCache's old default MaximumPayloadBytes (1 MiB) but within
+        // MaxCacheableContentSize (10 MB). Without the fix this is silently never cached.
+        var content = new byte[2 * 1024 * 1024];
+        Array.Fill(content, (byte)'x');
+
+        var mockResponse = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new ByteArrayContent(content)
+        };
+        mockResponse.Content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler); // default options
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync(TestUrl, _ct);
+        await client.GetAsync(TestUrl, _ct);
+
+        mockHandler.RequestCount.ShouldBe(1); // Second request served from cache
+    }
+
+    [Fact]
     public async Task Empty_response_is_cacheable()
     {
         var mockResponse = new HttpResponseMessage

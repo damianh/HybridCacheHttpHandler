@@ -57,6 +57,12 @@ public static class ServiceCollectionExtensions
             serviceCollection.AddOptions<TimeProviderMemoryCacheOptions>();
             serviceCollection.TryAddSingleton<TimeProviderMemoryCache>();
             serviceCollection.TryAddSingleton<IMemoryCache>(sp => sp.GetRequiredService<TimeProviderMemoryCache>());
+            // Peek at handler options to align HybridCache's MaximumPayloadBytes with MaxCacheableContentSize.
+            // HybridCache defaults to 1 MiB; responses between 1 MiB and MaxCacheableContentSize would
+            // silently never reach L2 without this alignment.
+            var previewOptions = new HttpHybridCacheHandlerOptions();
+            configure(previewOptions);
+
             serviceCollection.AddKeyedHybridCache(HybridCacheKey, options =>
             {
                 // Use a large default expiration so that HybridCache entries are not evicted
@@ -67,6 +73,11 @@ public static class ServiceCollectionExtensions
                     Expiration = TimeSpan.FromHours(24),
                     LocalCacheExpiration = TimeSpan.FromHours(24)
                 };
+                // Align HybridCache's payload limit with the handler's content size limit so that
+                // responses up to MaxCacheableContentSize are not silently dropped by HybridCache.
+                // HybridCache internally casts MaximumPayloadBytes to int (checked), so cap at int.MaxValue
+                // to avoid OverflowException when MaxCacheableContentSize is long.MaxValue ("unlimited").
+                options.MaximumPayloadBytes = Math.Min(previewOptions.MaxCacheableContentSize, int.MaxValue);
             });
             serviceCollection.AddTransient<HttpHybridCacheHandler>();
             serviceCollection.AddOptions<HttpHybridCacheHandlerOptions>()
