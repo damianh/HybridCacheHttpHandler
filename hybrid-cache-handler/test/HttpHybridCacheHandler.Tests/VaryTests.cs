@@ -236,6 +236,45 @@ public class VaryTests
     }
 
     [Fact]
+    public async Task Vary_header_preserves_commas_inside_values()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            return new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent($"response {requestCount}"),
+                Headers =
+                {
+                    { "Cache-Control", "max-age=3600" },
+                    { "Vary", "Foo" }
+                }
+            };
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Foo", "\"a, b\"");
+        await client.SendAsync(request1, _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Foo", "\"a, b\"");
+        await client.SendAsync(request2, _ct);
+
+        requestCount.ShouldBe(1);
+
+        var request3 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request3.Headers.Add("Foo", "\"a,b\"");
+        await client.SendAsync(request3, _ct);
+
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Stored_request_missing_Vary_header_does_not_match_presented_request()
     {
         var requestCount = 0;
@@ -307,6 +346,50 @@ public class VaryTests
         var response3 = await client.SendAsync(request3, _ct);
         (await response3.Content.ReadAsStringAsync(_ct)).ShouldBe("foo_1");
 
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Duplicate_Vary_headers_do_not_outrank_more_specific_variant()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(async request =>
+        {
+            requestCount++;
+            var hasBar = request.Headers.TryGetValues("Bar", out _);
+
+            return await Task.FromResult(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(hasBar ? "foo-bar" : "foo-duplicate"),
+                Headers =
+                {
+                    { "Cache-Control", "max-age=3600" },
+                    { "Vary", hasBar ? "Foo, Bar" : "Foo, Foo" }
+                }
+            });
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Foo", "1");
+        request1.Headers.Add("Bar", "2");
+        var response1 = await client.SendAsync(request1, _ct);
+        (await response1.Content.ReadAsStringAsync(_ct)).ShouldBe("foo-bar");
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Foo", "1");
+        var response2 = await client.SendAsync(request2, _ct);
+        (await response2.Content.ReadAsStringAsync(_ct)).ShouldBe("foo-duplicate");
+
+        var request3 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request3.Headers.Add("Foo", "1");
+        request3.Headers.Add("Bar", "2");
+        var response3 = await client.SendAsync(request3, _ct);
+
+        (await response3.Content.ReadAsStringAsync(_ct)).ShouldBe("foo-bar");
         requestCount.ShouldBe(2);
     }
 

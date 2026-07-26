@@ -1695,6 +1695,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 .SelectMany(v => v.Split(','))
                 .Select(v => v.Trim())
                 .Where(v => !string.IsNullOrEmpty(v) && v != "*")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
             if (varyHeaders.Length > 0 && request != null)

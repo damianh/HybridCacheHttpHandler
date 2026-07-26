@@ -60,8 +60,7 @@ internal static class VaryMatcher
     public static string NormalizeHeaderValue(IEnumerable<string> values)
     {
         var normalizedTokens = values
-            .SelectMany(static value => value.Split(','))
-            .Select(static token => token.Trim())
+            .Select(static value => value.Trim())
             .Where(static token => token.Length > 0);
 
         return string.Join(",", normalizedTokens);
