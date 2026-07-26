@@ -801,6 +801,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var mergedContentHeaders = new Dictionary<string, string[]>(cached.ContentHeaders, StringComparer.OrdinalIgnoreCase);
         var updatedResponseHeaders = CaptureHeaders(notModifiedResponse.Headers);
         var updatedResponseContentHeaders = CaptureHeaders(notModifiedResponse.Content.Headers);
+        updatedResponseContentHeaders.Remove("Content-Length");
         var stripNames = BuildStoredHeaderStripSet(notModifiedResponse, effectiveQualifiedNoCacheHeaderNames);
         RemoveHeaders(updatedResponseHeaders, stripNames);
         RemoveHeaders(updatedResponseContentHeaders, stripNames);
@@ -821,6 +822,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             ContentHeaders = mergedContentHeaders,
             CachedAt = _timeProvider.GetUtcNow(),
             MaxAge = updatedMaxAge ?? cached.MaxAge,
+            HasSharedMaxAge = hasAnyDirectiveHeaders ? directives.HasSharedMaxAge : cached.HasSharedMaxAge,
             ETag = notModifiedResponse.Headers.ETag?.Tag ?? cached.ETag,
             LastModified = notModifiedResponse.Content.Headers.LastModified ?? cached.LastModified,
             Expires = updatedExpires ?? cached.Expires,
@@ -1878,6 +1880,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return false;
         }
 
+        if (cachedResponse.HasSharedMaxAge)
+        {
+            return false;
+        }
+
         if (cachedResponse.StaleIfError.HasValue)
         {
             return staleness <= cachedResponse.StaleIfError.Value;
@@ -1912,9 +1919,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var ignoreStoredAge = false;
 
         if (_options.Mode == CacheMode.Shared &&
-            TryGetTargetedCacheControlValue(response, out var targetedCacheControlValue))
+            TryGetTargetedCacheControlValue(response, out var targetedCacheControlValue) &&
+            TryParseTargetedCacheControl(targetedCacheControlValue, out var targeted))
         {
-            var targeted = ParseTargetedCacheControl(targetedCacheControlValue);
             noStore = targeted.NoStore;
             noCache = targeted.NoCache;
             isPrivate = targeted.Private;
@@ -1923,7 +1930,6 @@ public class HttpHybridCacheHandler : DelegatingHandler
             proxyRevalidate = targeted.ProxyRevalidate ?? proxyRevalidate;
             maxAge = targeted.MaxAge;
             hasSharedMaxAge = targeted.MaxAge.HasValue;
-            ignoreStoredAge = targeted.MaxAge.HasValue;
         }
 
         if (noStore &&
@@ -2029,9 +2035,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
             .Any(part => string.Equals(part, token, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static TargetedCacheDirectives ParseTargetedCacheControl(string value)
+    private static bool TryParseTargetedCacheControl(string value, out TargetedCacheDirectives directives)
     {
-        var directives = new TargetedCacheDirectives();
+        directives = new TargetedCacheDirectives();
         foreach (var member in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             if (string.IsNullOrWhiteSpace(member))
@@ -2043,6 +2049,12 @@ public class HttpHybridCacheHandler : DelegatingHandler
             if (string.IsNullOrWhiteSpace(token))
             {
                 continue;
+            }
+
+            if (!IsValidDirectiveToken(token))
+            {
+                directives = new TargetedCacheDirectives();
+                return false;
             }
 
             var equalsIndex = token.IndexOf('=');
@@ -2078,8 +2090,21 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 continue;
             }
 
-            var key = token[..equalsIndex].Trim();
-            var rawValue = token[(equalsIndex + 1)..].Trim();
+            if (equalsIndex == 0 || equalsIndex == token.Length - 1)
+            {
+                directives = new TargetedCacheDirectives();
+                return false;
+            }
+
+            if (char.IsWhiteSpace(token[equalsIndex - 1]) ||
+                char.IsWhiteSpace(token[equalsIndex + 1]))
+            {
+                directives = new TargetedCacheDirectives();
+                return false;
+            }
+
+            var key = token[..equalsIndex];
+            var rawValue = token[(equalsIndex + 1)..];
             if (key.Equals("max-age", StringComparison.OrdinalIgnoreCase) &&
                 long.TryParse(rawValue, out var seconds) &&
                 seconds >= 0)
@@ -2088,7 +2113,37 @@ public class HttpHybridCacheHandler : DelegatingHandler
             }
         }
 
-        return directives;
+        return true;
+    }
+
+    private static bool IsValidDirectiveToken(string token)
+    {
+        foreach (var ch in token)
+        {
+            if (ch == '=')
+            {
+                continue;
+            }
+
+            if (char.IsWhiteSpace(ch))
+            {
+                return false;
+            }
+
+            if (char.IsLetterOrDigit(ch))
+            {
+                continue;
+            }
+
+            if (ch is '!' or '#' or '$' or '%' or '\'' or '*' or '+' or '-' or '.' or '^' or '_' or '`' or '|' or '~')
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
     }
 
     private static string[] ParseQualifiedNoCacheHeaderNames(string cacheControlValue)
@@ -2773,6 +2828,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             ContentHeaders = contentHeaders,
             CachedAt = _timeProvider.GetUtcNow(),
             MaxAge = maxAge,
+            HasSharedMaxAge = directives.HasSharedMaxAge,
             ETag = etag,
             LastModified = lastModified,
             Expires = expires,
