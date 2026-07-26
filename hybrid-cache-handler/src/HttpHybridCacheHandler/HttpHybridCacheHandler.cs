@@ -2598,8 +2598,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return false;
         }
 
-        // Check for Cache-Control header with max-age
-        if (directives.MaxAge > TimeSpan.Zero)
+        // Check for Cache-Control header with max-age (including max-age=0)
+        if (directives.MaxAge.HasValue)
         {
             return true;
         }
