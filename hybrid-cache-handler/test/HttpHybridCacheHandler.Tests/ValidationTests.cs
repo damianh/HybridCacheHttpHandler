@@ -102,6 +102,56 @@ public class ValidationTests
     }
 
     [Fact]
+    public async Task Response_304_updates_stored_response_and_content_headers()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("cached-body")
+                };
+                response.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1");
+                response.Headers.TryAddWithoutValidation("ETag", "\"v1\"");
+                response.Headers.TryAddWithoutValidation("Test-Header", "initial");
+                response.Content.Headers.TryAddWithoutValidation("Content-Encoding", "gzip");
+                return response;
+            }
+
+            var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = new ByteArrayContent([])
+            };
+            notModifiedResponse.Headers.TryAddWithoutValidation("Cache-Control", "max-age=3600");
+            notModifiedResponse.Headers.TryAddWithoutValidation("ETag", "\"v1\"");
+            notModifiedResponse.Headers.TryAddWithoutValidation("Test-Header", "updated");
+            notModifiedResponse.Content.Headers.TryAddWithoutValidation("Content-Encoding", "br");
+            return notModifiedResponse;
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/header-update", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var revalidatedResponse = await client.GetAsync("https://example.com/header-update", _ct);
+        var cachedResponse = await client.GetAsync("https://example.com/header-update", _ct);
+
+        requestCount.ShouldBe(2);
+        revalidatedResponse.Headers.TryGetValues("Test-Header", out var revalidatedHeaderValues).ShouldBeTrue();
+        revalidatedHeaderValues.ShouldBe(["updated"]);
+        revalidatedResponse.Content.Headers.ContentEncoding.ShouldBe(["br"]);
+
+        cachedResponse.Headers.TryGetValues("Test-Header", out var cachedHeaderValues).ShouldBeTrue();
+        cachedHeaderValues.ShouldBe(["updated"]);
+        cachedResponse.Content.Headers.ContentEncoding.ShouldBe(["br"]);
+    }
+
+    [Fact]
     public async Task Response_304_updates_stale_if_error_window()
     {
         var requestCount = 0;
