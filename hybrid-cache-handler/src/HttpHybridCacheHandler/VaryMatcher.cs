@@ -148,8 +148,13 @@ internal static class VaryMatcher
         var acceptLanguageWeight = 0d;
 
         var seenVaryHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var varyHeader in variant.VaryHeaders)
+        foreach (var rawVaryHeader in variant.VaryHeaders)
         {
+            if (!TryNormalizeVaryHeaderName(rawVaryHeader, out var varyHeader))
+            {
+                continue;
+            }
+
             if (!seenVaryHeaders.Add(varyHeader))
             {
                 continue;
@@ -191,6 +196,47 @@ internal static class VaryMatcher
         }
 
         score = new VariantMatchScore(exactHeaderCount, acceptLanguageMatchRank, acceptLanguageWeight, variant.CachedAt);
+        return true;
+    }
+
+    private static bool TryNormalizeVaryHeaderName(string? headerName, out string normalizedHeaderName)
+    {
+        normalizedHeaderName = string.Empty;
+        if (string.IsNullOrWhiteSpace(headerName))
+        {
+            return false;
+        }
+
+        var candidate = headerName.Trim();
+        if (candidate.Length == 0 || candidate == "*")
+        {
+            return false;
+        }
+
+        foreach (var c in candidate)
+        {
+            if (!char.IsLetterOrDigit(c) &&
+                c != '!' &&
+                c != '#' &&
+                c != '$' &&
+                c != '%' &&
+                c != '&' &&
+                c != '\'' &&
+                c != '*' &&
+                c != '+' &&
+                c != '-' &&
+                c != '.' &&
+                c != '^' &&
+                c != '_' &&
+                c != '`' &&
+                c != '|' &&
+                c != '~')
+            {
+                return false;
+            }
+        }
+
+        normalizedHeaderName = candidate;
         return true;
     }
 

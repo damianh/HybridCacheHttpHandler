@@ -237,6 +237,82 @@ public class VaryTests
     }
 
     [Fact]
+    public async Task Vary_miss_does_not_revalidate_using_non_matching_variant_validator()
+    {
+        var requestCount = 0;
+        HttpRequestMessage? secondRequest = null;
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            if (requestCount == 2)
+            {
+                secondRequest = request;
+            }
+
+            if (requestCount == 1)
+            {
+                var initialResponse = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("response_1")
+                };
+                initialResponse.Headers.Add("Cache-Control", "max-age=1");
+                initialResponse.Headers.Add("Vary", "Foo");
+                initialResponse.Headers.Add("ETag", "\"shared\"");
+                return Task.FromResult(initialResponse);
+            }
+
+            var hasSharedValidator = false;
+            if (request.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues))
+            {
+                foreach (var ifNoneMatchValue in ifNoneMatchValues)
+                {
+                    if (ifNoneMatchValue.Contains("\"shared\"", StringComparison.Ordinal))
+                    {
+                        hasSharedValidator = true;
+                        break;
+                    }
+                }
+            }
+
+            if (hasSharedValidator)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            }
+
+            var foo = request.Headers.TryGetValues("Foo", out var fooValues)
+                ? string.Join(string.Empty, fooValues)
+                : "missing";
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($"response_{foo}")
+            };
+            response.Headers.Add("Cache-Control", "max-age=3600");
+            response.Headers.Add("Vary", "Foo");
+            response.Headers.Add("ETag", "\"shared\"");
+            return Task.FromResult(response);
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Foo", "1");
+        await client.SendAsync(request1, _ct);
+
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Foo", "2");
+        var response2 = await client.SendAsync(request2, _ct);
+
+        response2.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await response2.Content.ReadAsStringAsync(_ct)).ShouldBe("response_2");
+        secondRequest.ShouldNotBeNull();
+        secondRequest.Headers.IfNoneMatch.ShouldBeEmpty();
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Vary_header_preserves_commas_inside_values()
     {
         var requestCount = 0;
@@ -441,6 +517,38 @@ public class VaryTests
 
         selected.ShouldNotBeNull();
         selected.ContentKey.ShouldBe("specific");
+    }
+
+    [Fact]
+    public void SelectVariant_ignores_invalid_legacy_Vary_header_names()
+    {
+        var variant = new CachedHttpMetadata
+        {
+            StatusCode = (int)HttpStatusCode.OK,
+            ContentKey = "valid",
+            ContentLength = 0,
+            Headers = new Dictionary<string, string[]>(),
+            ContentHeaders = new Dictionary<string, string[]>(),
+            CachedAt = DateTimeOffset.UnixEpoch,
+            VaryHeaders = [null!, " ", "*", "Foo Bar", " Foo "],
+            VaryHeaderValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Foo"] = "1"
+            }
+        };
+
+        var entry = new CachedHttpEntry
+        {
+            Variants = [variant]
+        };
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request.Headers.Add("Foo", "1");
+
+        var selected = VaryMatcher.SelectVariant(entry, request);
+
+        selected.ShouldNotBeNull();
+        selected.ContentKey.ShouldBe("valid");
     }
 
     [Fact]

@@ -289,46 +289,39 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
             var cachedResponse = VaryMatcher.SelectVariant(cachedEntry, request, candidate => IsFresh(candidate, request))
                 ?? VaryMatcher.SelectVariant(cachedEntry, request);
-            var revalidateMismatchedVariant = false;
             if (cachedResponse == null)
             {
-                cachedResponse = SelectValidatorVariant(cachedEntry);
-                if (cachedResponse == null)
+                var variantMissResponse = await base.SendAsync(request, ct);
+                var variantMissRawHeaders = CaptureRawHeaders(variantMissResponse);
+                if (IsResponseCacheable(variantMissResponse, request))
                 {
-                    var variantMissResponse = await base.SendAsync(request, ct);
-                    var variantMissRawHeaders = CaptureRawHeaders(variantMissResponse);
-                    if (IsResponseCacheable(variantMissResponse, request))
+                    var freshVariant = await SerializeResponse(variantMissResponse, variantMissRawHeaders, request);
+                    if (freshVariant != null)
                     {
-                        var freshVariant = await SerializeResponse(variantMissResponse, variantMissRawHeaders, request);
-                        if (freshVariant != null)
+                        try
                         {
-                            try
-                            {
-                                await SetMergedEntryAsync(
-                                    cacheKey2,
-                                    requestUriTag,
-                                    cachedEntry,
-                                    current => UpsertVariant(current, freshVariant),
-                                    ct);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.CacheWriteFailed(request.RequestUri, ex);
-                            }
+                            await SetMergedEntryAsync(
+                                cacheKey2,
+                                requestUriTag,
+                                cachedEntry,
+                                current => UpsertVariant(current, freshVariant),
+                                ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.CacheWriteFailed(request.RequestUri, ex);
                         }
                     }
-
-                    RestoreRawHeaders(variantMissResponse, variantMissRawHeaders);
-                    CacheMisses.Add(1, CreateMetricTags(request));
-                    AddDiagnosticHeaders(variantMissResponse, DiagnosticHeaders.Miss);
-                    return variantMissResponse;
                 }
 
-                revalidateMismatchedVariant = true;
+                RestoreRawHeaders(variantMissResponse, variantMissRawHeaders);
+                CacheMisses.Add(1, CreateMetricTags(request));
+                AddDiagnosticHeaders(variantMissResponse, DiagnosticHeaders.Miss);
+                return variantMissResponse;
             }
 
             // Check if validation is required (no-cache request or no-cache response)
-            if (revalidateMismatchedVariant || mustRevalidate || cachedResponse.NoCache)
+            if (mustRevalidate || cachedResponse.NoCache)
             {
                 var validationRequest = CreateValidationRequest(request, cachedResponse, out var validationUsesStoredValidator);
                 uncachedResponse = await base.SendAsync(validationRequest, ct);
@@ -1214,25 +1207,6 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         return CalculateCurrentAge(cached) <= CalculateSemanticLifetime(cached);
-    }
-
-    private static CachedHttpMetadata? SelectValidatorVariant(CachedHttpEntry entry)
-    {
-        CachedHttpMetadata? candidate = null;
-        foreach (var variant in entry.Variants)
-        {
-            if (string.IsNullOrEmpty(variant.ETag) && !variant.LastModified.HasValue)
-            {
-                continue;
-            }
-
-            if (candidate == null || variant.CachedAt > candidate.CachedAt)
-            {
-                candidate = variant;
-            }
-        }
-
-        return candidate;
     }
 
     private bool IsFresh(CachedHttpMetadata cached, HttpRequestMessage request)
