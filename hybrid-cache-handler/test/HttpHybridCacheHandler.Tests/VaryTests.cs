@@ -639,7 +639,7 @@ public class VaryTests
             });
         });
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler, options =>
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler, options =>
         {
             options.VaryHeaders = ["X-Custom-Header"];
         });

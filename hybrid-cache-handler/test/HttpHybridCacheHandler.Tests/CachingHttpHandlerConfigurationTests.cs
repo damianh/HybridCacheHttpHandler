@@ -136,6 +136,30 @@ public class CachingHttpHandlerConfigurationTests
     }
 
     [Fact]
+    public void Propagate_mode_from_configure_delegate()
+    {
+        using var services = new ServiceCollection()
+            .AddHttpHybridCacheHandler(options => options.Mode = CacheMode.Shared)
+            .BuildServiceProvider();
+
+        var options = services.GetRequiredService<IOptions<HttpHybridCacheHandlerOptions>>().Value;
+        options.Mode.ShouldBe(CacheMode.Shared);
+    }
+
+    [Fact]
+    public void Propagate_targeted_cache_control_header_names_from_configure_delegate()
+    {
+        var expected = new[] { "X-Shared-Cache-Control", "Surrogate-Control" };
+
+        using var services = new ServiceCollection()
+            .AddHttpHybridCacheHandler(options => options.TargetedCacheControlHeaderNames = expected)
+            .BuildServiceProvider();
+
+        var options = services.GetRequiredService<IOptions<HttpHybridCacheHandlerOptions>>().Value;
+        options.TargetedCacheControlHeaderNames.ShouldBe(expected);
+    }
+
+    [Fact]
     public async Task Configure_delegate_is_applied_once()
     {
         var configureInvocationCount = 0;

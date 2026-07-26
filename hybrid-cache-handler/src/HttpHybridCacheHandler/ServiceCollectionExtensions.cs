@@ -96,6 +96,8 @@ public static class ServiceCollectionExtensions
             options.CompressibleContentTypes = previewOptions.CompressibleContentTypes;
             options.CacheableContentTypes = previewOptions.CacheableContentTypes;
             options.IncludeDiagnosticHeaders = previewOptions.IncludeDiagnosticHeaders;
+            options.Mode = previewOptions.Mode;
+            options.TargetedCacheControlHeaderNames = previewOptions.TargetedCacheControlHeaderNames;
         }
     }
 }
