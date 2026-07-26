@@ -284,17 +284,19 @@ public class OptionalConformanceTests
     [Fact]
     public async Task Shared_cache_recognizes_cdn_cache_control_public_for_authorized_requests()
     {
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var response = new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent("authorized")
         };
-        response.Content.Headers.Expires = DateTimeOffset.UtcNow.AddMinutes(1);
+        response.Content.Headers.Expires = now.AddMinutes(1);
         response.Headers.TryAddWithoutValidation("CDN-Cache-Control", "public");
 
         var mockHandler = new MockHttpMessageHandler(response);
         await using var fixture = new HttpHybridCacheHandlerFixture(
             mockHandler,
             options => options.Mode = CacheMode.Shared);
+        fixture.SetUtcNow(now);
         using var client = fixture.CreateClient();
 
         var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/cdn-public-auth");
@@ -426,6 +428,50 @@ public class OptionalConformanceTests
 
         requestCount.ShouldBe(2);
         headResponse.Content.Headers.ContentLength.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Head_refresh_does_not_replay_cached_age_or_date_when_origin_omits_them()
+    {
+        var now = new DateTimeOffset(2026, 1, 1, 0, 1, 0, TimeSpan.Zero);
+        var initialDate = now.AddMinutes(-1);
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(req =>
+        {
+            requestCount++;
+            if (req.Method == HttpMethod.Head)
+            {
+                var head = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent([])
+                };
+                head.Headers.TryAddWithoutValidation("Cache-Control", "max-age=120");
+                head.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+                return Task.FromResult(head);
+            }
+
+            var get = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("v1")
+            };
+            get.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1");
+            get.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+            get.Headers.Date = initialDate;
+            get.Headers.TryAddWithoutValidation("Age", "40");
+            return Task.FromResult(get);
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        fixture.SetUtcNow(now);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/head-age-date", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        var headResponse = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, "https://example.com/head-age-date"), _ct);
+
+        requestCount.ShouldBe(2);
+        headResponse.Headers.Contains("Age").ShouldBeFalse();
+        headResponse.Headers.Contains("Date").ShouldBeFalse();
     }
 
     [Fact]

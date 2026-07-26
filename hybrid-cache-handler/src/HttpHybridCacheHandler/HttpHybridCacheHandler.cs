@@ -795,6 +795,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var updatedMaxAge = directives.MaxAge;
         var updatedExpires = notModifiedContentHeaders?.Expires;
         var updatedDate = notModifiedResponse.Headers.Date;
+        var ignoreStoredAge = hasAnyDirectiveHeaders ? directives.IgnoreStoredAge : cached.IgnoreStoredAge;
         var effectiveQualifiedNoCacheHeaderNames = hasAnyDirectiveHeaders
             ? directives.QualifiedNoCacheHeaderNames
             : cached.QualifiedNoCacheHeaderNames;
@@ -830,7 +831,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             LastModified = notModifiedContentHeaders?.LastModified ?? cached.LastModified,
             Expires = updatedExpires ?? cached.Expires,
             Date = updatedDate ?? cached.Date,
-            Age = directives.IgnoreStoredAge ? TimeSpan.Zero : updatedAge ?? TimeSpan.Zero,
+            Age = ignoreStoredAge ? TimeSpan.Zero : updatedAge ?? cached.Age,
             VaryHeaders = cached.VaryHeaders,
             VaryHeaderValues = cached.VaryHeaderValues,
             StaleWhileRevalidate = cached.StaleWhileRevalidate,
@@ -839,7 +840,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             ProxyRevalidate = hasAnyDirectiveHeaders ? directives.ProxyRevalidate : cached.ProxyRevalidate,
             NoCache = hasAnyDirectiveHeaders ? directives.NoCache : cached.NoCache,
             QualifiedNoCacheHeaderNames = effectiveQualifiedNoCacheHeaderNames,
-            IgnoreStoredAge = hasAnyDirectiveHeaders ? directives.IgnoreStoredAge : cached.IgnoreStoredAge,
+            IgnoreStoredAge = ignoreStoredAge,
             IsCompressed = cached.IsCompressed,
             IsPartial = cached.IsPartial,
             RangeStart = cached.RangeStart,
@@ -1040,6 +1041,12 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         foreach (var header in updatedCachedResponse.Headers)
         {
+            if (header.Key.Equals("Age", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("Date", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             merged.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
