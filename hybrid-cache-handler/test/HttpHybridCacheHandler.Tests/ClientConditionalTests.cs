@@ -4,6 +4,8 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DamianH.HttpHybridCacheHandler;
 
@@ -85,7 +87,28 @@ public class ClientConditionalTests
     }
 
     [Fact]
-    public async Task Fresh_cached_response_without_Last_Modified_returns_304_for_If_Modified_Since()
+    public async Task Fresh_cached_ETag_matches_list_item_after_even_backslashes()
+    {
+        var originResponse = CreateCacheableResponse("cached");
+        originResponse.Headers.TryAddWithoutValidation("ETag", "\"def\"");
+        var mockHandler = new MockHttpMessageHandler(originResponse);
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-None-Match", "\"abc\\\\\", \"def\"");
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Fresh_cached_response_without_Last_Modified_ignores_If_Modified_Since()
     {
         var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached"));
 
@@ -99,7 +122,8 @@ public class ClientConditionalTests
 
         var response = await client.SendAsync(conditionalRequest, _ct);
 
-        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await response.Content.ReadAsStringAsync(_ct)).ShouldBe("cached");
         mockHandler.RequestCount.ShouldBe(1);
     }
 
@@ -183,6 +207,27 @@ public class ClientConditionalTests
         validationRequest.ShouldNotBeNull();
         validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
         ifNoneMatchValues.ShouldBe(["W/\"abcdef\""]);
+    }
+
+    [Fact]
+    public async Task Raw_ETag_value_is_stored_in_cached_metadata()
+    {
+        const string RawEtag = "W/ \"abc\\\\def\"";
+        var cache = new RecordingHybridCache();
+        var originResponse = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("cached")
+        };
+        originResponse.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+        originResponse.Headers.TryAddWithoutValidation("ETag", RawEtag);
+        var mockHandler = new SingleResponseMessageHandler(originResponse);
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler, customCache: cache);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        cache.StoredMetadata.ShouldHaveSingleItem().ETag.ShouldBe(RawEtag);
     }
 
     [Fact]
@@ -364,5 +409,64 @@ public class ClientConditionalTests
         response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
         configure?.Invoke(response);
         return response;
+    }
+
+    private sealed class RecordingHybridCache : HybridCache
+    {
+        private readonly HybridCache _inner = CreateInnerCache();
+
+        public List<CachedHttpMetadata> StoredMetadata { get; } = [];
+
+        private static HybridCache CreateInnerCache()
+        {
+            var services = new ServiceCollection();
+            services.AddHybridCache();
+            return services.BuildServiceProvider().GetRequiredService<HybridCache>();
+        }
+
+        public override ValueTask<T> GetOrCreateAsync<TState, T>(
+            string key,
+            TState state,
+            Func<TState, Ct, ValueTask<T>> factory,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default) =>
+            _inner.GetOrCreateAsync(key, state, factory, options, tags, cancellationToken);
+
+        public override async ValueTask SetAsync<T>(
+            string key,
+            T value,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default)
+        {
+            if (value is CachedHttpMetadata metadata)
+            {
+                StoredMetadata.Add(metadata);
+            }
+
+            await _inner.SetAsync(key, value, options, tags, cancellationToken);
+        }
+
+        public override ValueTask RemoveAsync(string key, Ct cancellationToken = default) =>
+            _inner.RemoveAsync(key, cancellationToken);
+
+        public override ValueTask RemoveAsync(IEnumerable<string> keys, Ct cancellationToken = default) =>
+            _inner.RemoveAsync(keys, cancellationToken);
+
+        public override ValueTask RemoveByTagAsync(string tag, Ct cancellationToken = default) =>
+            _inner.RemoveByTagAsync(tag, cancellationToken);
+
+        public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default) =>
+            _inner.RemoveByTagAsync(tags, cancellationToken);
+    }
+
+    private sealed class SingleResponseMessageHandler(HttpResponseMessage response) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, Ct ct)
+        {
+            response.RequestMessage = request;
+            return Task.FromResult(response);
+        }
     }
 }

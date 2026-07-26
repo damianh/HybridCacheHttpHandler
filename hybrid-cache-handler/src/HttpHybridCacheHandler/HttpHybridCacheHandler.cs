@@ -825,7 +825,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         if (!cachedResponse.LastModified.HasValue)
         {
-            return true;
+            return false;
         }
 
         return cachedResponse.LastModified.Value <= ifModifiedSinceDate;
@@ -933,11 +933,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
     {
         var builder = new StringBuilder();
         var inQuotes = false;
-        var previous = '\0';
+        var consecutiveBackslashes = 0;
 
         foreach (var character in value)
         {
-            if (character == '"' && previous != '\\')
+            if (character == '"' && consecutiveBackslashes % 2 == 0)
             {
                 inQuotes = !inQuotes;
             }
@@ -951,12 +951,12 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 }
 
                 builder.Clear();
-                previous = character;
+                consecutiveBackslashes = 0;
                 continue;
             }
 
             builder.Append(character);
-            previous = character;
+            consecutiveBackslashes = character == '\\' ? consecutiveBackslashes + 1 : 0;
         }
 
         var final = builder.ToString().Trim();
@@ -1317,13 +1317,13 @@ public class HttpHybridCacheHandler : DelegatingHandler
     /// </summary>
     private static RawHeaderSnapshot CaptureRawHeaders(HttpResponseMessage response)
     {
-        var headers = new Dictionary<string, string[]>();
+        var headers = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         foreach (var header in response.Headers.NonValidated)
         {
             headers[header.Key] = header.Value.ToArray();
         }
 
-        var contentHeaders = new Dictionary<string, string[]>();
+        var contentHeaders = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         foreach (var header in response.Content.Headers.NonValidated)
         {
             contentHeaders[header.Key] = header.Value.ToArray();
@@ -1450,11 +1450,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         // Extract ETag
-        string? etag = null;
-        if (response.Headers.TryGetValues("ETag", out var etagValues))
-        {
-            etag = etagValues.FirstOrDefault();
-        }
+        string? etag = rawHeaders.Headers.TryGetValue("ETag", out var etagValues)
+            ? etagValues.FirstOrDefault()
+            : null;
 
         // Extract Last-Modified
         var lastModified = response.Content.Headers.LastModified;
