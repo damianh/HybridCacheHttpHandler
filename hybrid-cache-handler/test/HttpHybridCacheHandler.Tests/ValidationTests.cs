@@ -140,12 +140,18 @@ public class ValidationTests
 
         var revalidatedResponse = await client.GetAsync("https://example.com/header-update", _ct);
         var cachedResponse = await client.GetAsync("https://example.com/header-update", _ct);
+        var revalidatedBody = await revalidatedResponse.Content.ReadAsStringAsync(_ct);
+        var cachedBody = await cachedResponse.Content.ReadAsStringAsync(_ct);
 
         requestCount.ShouldBe(2);
+        revalidatedResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        revalidatedBody.ShouldBe("cached-body");
         revalidatedResponse.Headers.TryGetValues("Test-Header", out var revalidatedHeaderValues).ShouldBeTrue();
         revalidatedHeaderValues.ShouldBe(["updated"]);
         revalidatedResponse.Content.Headers.ContentEncoding.ShouldBe(["br"]);
 
+        cachedResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        cachedBody.ShouldBe("cached-body");
         cachedResponse.Headers.TryGetValues("Test-Header", out var cachedHeaderValues).ShouldBeTrue();
         cachedHeaderValues.ShouldBe(["updated"]);
         cachedResponse.Content.Headers.ContentEncoding.ShouldBe(["br"]);
