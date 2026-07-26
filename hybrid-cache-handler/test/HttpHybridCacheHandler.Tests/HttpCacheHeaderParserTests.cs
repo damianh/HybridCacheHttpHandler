@@ -43,6 +43,15 @@ public class HttpCacheHeaderParserTests
     }
 
     [Fact]
+    public void Parse_cache_control_applies_parameterized_no_cache_and_private()
+    {
+        var parsed = HttpCacheHeaderParser.ParseCacheControl(["no-cache=\"Set-Cookie\", private=\"Authorization\""]);
+
+        parsed.NoCache.ShouldBeTrue();
+        parsed.Private.ShouldBeTrue();
+    }
+
+    [Fact]
     public void Parse_age_uses_first_line_first_member_and_allows_parameters()
     {
         HttpCacheHeaderParser.ParseAge(["7200;foo=bar"]).ShouldBe(TimeSpan.FromSeconds(7200));
@@ -66,6 +75,15 @@ public class HttpCacheHeaderParserTests
         HttpCacheHeaderParser.ParseSingleHttpDate(["Thursday, 18-Aug-50 02:01:18 GMT"]).ShouldNotBeNull();
         HttpCacheHeaderParser.ParseSingleHttpDate(["Thu Aug  8 02:01:18 2050"]).ShouldNotBeNull();
         HttpCacheHeaderParser.ParseSingleHttpDate(["Thu, 18 Aug 2050 02:01:18 gMT"]).ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void Parse_http_date_maps_rfc850_two_digit_years_per_http_spec()
+    {
+        HttpCacheHeaderParser.ParseSingleHttpDate(["Thursday, 18-Aug-70 02:01:18 GMT"])
+            .ShouldBe(new DateTimeOffset(1970, 8, 18, 2, 1, 18, TimeSpan.Zero));
+        HttpCacheHeaderParser.ParseSingleHttpDate(["Thursday, 18-Aug-69 02:01:18 GMT"])
+            .ShouldBe(new DateTimeOffset(2069, 8, 18, 2, 1, 18, TimeSpan.Zero));
     }
 
     [Fact]

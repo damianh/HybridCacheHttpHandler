@@ -67,7 +67,15 @@ internal static class HttpCacheHeaderParser
                 var name = directive[..equalsIndex];
                 var rawValue = directive[(equalsIndex + 1)..];
 
-                if (name.Equals("max-age", StringComparison.OrdinalIgnoreCase))
+                if (name.Equals("no-cache", StringComparison.OrdinalIgnoreCase))
+                {
+                    noCache = true;
+                }
+                else if (name.Equals("private", StringComparison.OrdinalIgnoreCase))
+                {
+                    isPrivate = true;
+                }
+                else if (name.Equals("max-age", StringComparison.OrdinalIgnoreCase))
                 {
                     if (TryParseLenientDeltaSeconds(rawValue, out var parsed))
                     {
@@ -341,12 +349,9 @@ internal static class HttpCacheHeaderParser
             return false;
         }
 
-        var currentYear = DateTimeOffset.UtcNow.Year;
-        var year = 2000 + yearTwoDigits;
-        if (year - currentYear > 50)
-        {
-            year = 1900 + yearTwoDigits;
-        }
+        var year = yearTwoDigits >= 70
+            ? 1900 + yearTwoDigits
+            : 2000 + yearTwoDigits;
 
         return TryCreateDateTimeOffset(year, month, day, hour, minute, second, out date);
     }

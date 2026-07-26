@@ -4,6 +4,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.IO.Compression;
 using System.Net;
 using Microsoft.Extensions.Caching.Hybrid;
@@ -1293,7 +1294,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var currentAge = CalculateCurrentAge(cachedResponse);
         var ageSeconds = Math.Max(0L, (long)Math.Floor(currentAge.TotalSeconds));
         response.Headers.Remove("Age");
-        response.Headers.TryAddWithoutValidation("Age", ageSeconds.ToString());
+        response.Headers.TryAddWithoutValidation("Age", ageSeconds.ToString(CultureInfo.InvariantCulture));
     }
 
     private static bool IsHeuristicallyCacheableStatus(HttpStatusCode statusCode)
