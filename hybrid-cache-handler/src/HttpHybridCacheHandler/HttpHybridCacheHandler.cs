@@ -8,6 +8,7 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
@@ -615,10 +616,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
             }
 
             // Response is stale, attempt validation
-            var staleValidationRequest = CreateValidationRequest(request, cachedResponse);
+            var staleValidationRequest = CreateValidationRequest(request, cachedResponse, out var staleValidationUsesStoredValidator);
             var stalenessForValidation = CalculateStaleness(cachedResponse);
 
-            RawHeaderSnapshot? staleValidationRawHeaders = null;
+            RawHeaderSnapshot staleValidationRawHeaders;
             try
             {
                 uncachedResponse = await base.SendAsync(staleValidationRequest, ct);
@@ -1107,6 +1108,13 @@ public class HttpHybridCacheHandler : DelegatingHandler
         if (!cachedPartialEntry.IsPartial ||
             !cachedPartialEntry.RangeStart.HasValue ||
             !cachedPartialEntry.RangeEnd.HasValue)
+        {
+            return null;
+        }
+
+        if (!cachedPartialEntry.RangeTotalLength.HasValue &&
+            !requestedRange.From.HasValue &&
+            requestedRange.To.HasValue)
         {
             return null;
         }
@@ -2953,9 +2961,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
             response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        var ageSeconds = Math.Max(0, (int)Math.Floor(CalculateCurrentAge(metadata).TotalSeconds));
+        var ageSeconds = Math.Max(0L, (long)Math.Floor(CalculateCurrentAge(metadata).TotalSeconds));
         response.Headers.Remove("Age");
-        response.Headers.TryAddWithoutValidation("Age", ageSeconds.ToString());
+        response.Headers.TryAddWithoutValidation("Age", ageSeconds.ToString(CultureInfo.InvariantCulture));
 
         return response;
     }

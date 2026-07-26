@@ -640,6 +640,45 @@ public class OptionalConformanceTests
     }
 
     [Fact]
+    public async Task Suffix_range_does_not_use_cached_partial_without_total_length()
+    {
+        var originCalls = 0;
+        var mockHandler = new MockHttpMessageHandler(req =>
+        {
+            originCalls++;
+            if (originCalls == 1)
+            {
+                var partialUnknownLength = new HttpResponseMessage(HttpStatusCode.PartialContent)
+                {
+                    Content = new StringContent("abc")
+                };
+                partialUnknownLength.Headers.TryAddWithoutValidation("Cache-Control", "max-age=3600");
+                partialUnknownLength.Content.Headers.TryAddWithoutValidation("Content-Range", "bytes 100-102/*");
+                partialUnknownLength.Headers.AcceptRanges.Add("bytes");
+                return Task.FromResult(partialUnknownLength);
+            }
+
+            return Task.FromResult(CreatePartialResponse("z", 199, 199, 200));
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        var initialRangeRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/range-suffix");
+        initialRangeRequest.Headers.Range = new RangeHeaderValue(100, 102);
+        await client.SendAsync(initialRangeRequest, _ct);
+
+        var suffixRangeRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/range-suffix");
+        suffixRangeRequest.Headers.TryAddWithoutValidation("Range", "bytes=-1");
+        var suffixResponse = await client.SendAsync(suffixRangeRequest, _ct);
+        var suffixBody = await suffixResponse.Content.ReadAsStringAsync(_ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
+        suffixResponse.StatusCode.ShouldBe(HttpStatusCode.PartialContent);
+        suffixBody.ShouldBe("z");
+    }
+
+    [Fact]
     public async Task Full_get_bypasses_cached_partial_response()
     {
         var requestRanges = new List<string?>();
