@@ -64,15 +64,10 @@ public class HttpHybridCacheHandlerOptions
 
     /// <summary>
     /// Default headers to include in Vary-aware cache keys. Values are
-    /// Accept, Accept-Encoding, Accept-Language, User-Agent.
+    /// none (response Vary matching is always enforced independently).
     /// </summary>
     public static string[] DefaultVaryHeaders { get; } =
-    [
-        "Accept",
-        "Accept-Encoding",
-        "Accept-Language",
-        "User-Agent"
-    ];
+    [];
 
     /// <summary>
     /// Heuristic freshness percentage for responses with Last-Modified but no explicit freshness info.
@@ -87,7 +82,9 @@ public class HttpHybridCacheHandlerOptions
     public TimeSpan HeuristicFreshnessMinimum { get; set; } = DefaultHeuristicFreshnessMinimum;
 
     /// <summary>
-    /// Headers to include in Vary-aware cache keys. Default is set to <see cref="DefaultVaryHeaders"/>.
+    /// Headers to include in request-key partitioning as a performance heuristic.
+    /// Correctness is enforced by matching the stored response Vary fields on cache hits.
+    /// Default is set to <see cref="DefaultVaryHeaders"/>.
     /// </summary>
     public string[] VaryHeaders { get; set; } = DefaultVaryHeaders;
 

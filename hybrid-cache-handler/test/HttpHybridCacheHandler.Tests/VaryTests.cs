@@ -167,7 +167,7 @@ public class VaryTests
     }
 
     [Fact]
-    public async Task Missing_Vary_header_in_request_returns_first_match()
+    public async Task Missing_Vary_header_in_request_causes_miss()
     {
 
         var requestCount = 0;
@@ -199,6 +199,114 @@ public class VaryTests
         await client.SendAsync(request2, _ct);
 
         requestCount.ShouldBe(2); // Missing header value = cache miss
+    }
+
+    [Fact]
+    public async Task Unconfigured_response_Vary_header_is_enforced()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            return new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent($"response {requestCount}"),
+                Headers =
+                {
+                    { "Cache-Control", "max-age=3600" },
+                    { "Vary", "Foo" }
+                }
+            };
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Foo", "1");
+        await client.SendAsync(request1, _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Foo", "2");
+        await client.SendAsync(request2, _ct);
+
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Stored_request_missing_Vary_header_does_not_match_presented_request()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            return new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent($"response {requestCount}"),
+                Headers =
+                {
+                    { "Cache-Control", "max-age=3600" },
+                    { "Vary", "Foo" }
+                }
+            };
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Foo", "1");
+        await client.SendAsync(request2, _ct);
+
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Multiple_variants_are_stored_and_retrieved_per_response_Vary()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(async request =>
+        {
+            requestCount++;
+            var fooValue = request.Headers.TryGetValues("Foo", out var values)
+                ? values.Single()
+                : "missing";
+
+            return await Task.FromResult(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent($"foo_{fooValue}"),
+                Headers =
+                {
+                    { "Cache-Control", "max-age=3600" },
+                    { "Vary", "Foo" }
+                }
+            });
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Foo", "1");
+        var response1 = await client.SendAsync(request1, _ct);
+        (await response1.Content.ReadAsStringAsync(_ct)).ShouldBe("foo_1");
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Foo", "2");
+        var response2 = await client.SendAsync(request2, _ct);
+        (await response2.Content.ReadAsStringAsync(_ct)).ShouldBe("foo_2");
+
+        var request3 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request3.Headers.Add("Foo", "1");
+        var response3 = await client.SendAsync(request3, _ct);
+        (await response3.Content.ReadAsStringAsync(_ct)).ShouldBe("foo_1");
+
+        requestCount.ShouldBe(2);
     }
 
     [Fact]
@@ -261,5 +369,63 @@ public class VaryTests
         await client.SendAsync(request2, _ct);
 
         mockHandler.RequestCount.ShouldBe(1); // Should match despite whitespace differences
+    }
+
+    [Fact]
+    public async Task Accept_Language_values_match_ignoring_order_and_case()
+    {
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("response"),
+            Headers =
+            {
+                { "Cache-Control", "max-age=3600" },
+                { "Vary", "Accept-Language" }
+            }
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Accept-Language", "en, de");
+        await client.SendAsync(request1, _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Accept-Language", "De, EN");
+        await client.SendAsync(request2, _ct);
+
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Accept_Language_can_match_by_Content_Language_selection()
+    {
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            var response = new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent("response")
+            };
+            response.Headers.Add("Cache-Control", "max-age=3600");
+            response.Headers.Add("Vary", "Accept-Language");
+            response.Content.Headers.ContentLanguage.Add("de");
+            return response;
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Accept-Language", "en, de");
+        await client.SendAsync(request1, _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Accept-Language", "fr;q=0.5, de;q=1.0");
+        await client.SendAsync(request2, _ct);
+
+        mockHandler.RequestCount.ShouldBe(1);
     }
 }

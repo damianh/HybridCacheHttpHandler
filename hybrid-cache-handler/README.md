@@ -50,7 +50,7 @@ RFC 9111 compliant client-side HTTP caching for `HttpClient`, powered by .NET's 
 ### Advanced Features
 
 - **Conditional Requests**: Automatic ETag (`If-None-Match`) and Last-Modified (`If-Modified-Since`) validation
-- **Vary Header Support**: Content negotiation with multiple cache entries per resource
+- **Vary Header Support**: Response-driven `Vary` matching with multiple stored variants per resource
 - **Unsafe Method Invalidation**: Invalidates cached GET/HEAD entries for the target URI (and same-origin `Location`/`Content-Location`) after successful unsafe requests like POST/PUT/DELETE
 - **Freshness Calculation**: Supports `Expires` header, `Age` header, and heuristic freshness (Last-Modified based)
 - **Stale Response Handling**: 
@@ -182,9 +182,9 @@ HttpClient → [Outer Handlers] → HttpHybridCacheHandler → SocketsHttpHandle
 .AddHttpMessageHandler(sp => sp.GetRequiredService<HttpHybridCacheHandler>());
 ```
 
-To include auth headers in cache key, configure `VaryHeaders` in the `AddHttpHybridCacheHandler` options.
+To include auth headers in request-key partitioning, configure `VaryHeaders` in the `AddHttpHybridCacheHandler` options.
 
-Auth applied before caching, headers included in cache key via Vary.
+Auth is applied before caching; configured `VaryHeaders` partition the request key and response `Vary` is always enforced on cache hits.
 
 ### Common Mistakes
 
@@ -244,7 +244,8 @@ Browser-like cache behavior suitable for client applications:
 - Caches responses with `Cache-Control: private`
 - Uses `max-age` directive (ignores `s-maxage`)
 - Caches authenticated requests if marked `private` or `max-age`
-- Each cache key is client-specific (Vary headers applied)
+- Request key can be client-specific when `VaryHeaders` is configured
+- Response variants are always matched using stored `Vary` header values
 
 **Example:**
 ```csharp
@@ -283,7 +284,7 @@ new HttpHybridCacheHandlerOptions
 - **Mode**: Cache mode determining caching behavior (default: `CacheMode.Private`). Use `CacheMode.Shared` for proxy/CDN scenarios
 - **HeuristicFreshnessPercent**: Heuristic freshness percentage for responses with Last-Modified but no explicit freshness info (default: 0.1 or 10%)
 - **HeuristicFreshnessMinimum**: Minimum heuristic freshness lifetime applied when Last-Modified exists but explicit freshness is absent (default: 30 seconds)
-- **VaryHeaders**: Headers to include in Vary-aware cache keys (default: Accept, Accept-Encoding, Accept-Language, User-Agent)
+- **VaryHeaders**: Optional headers to include in request-key partitioning (default: empty). Correctness still comes from response `Vary` matching on cache hits
 - **MaxCacheableContentSize**: Maximum size in bytes for cacheable response content (default: 10 MB). Responses larger than this will not be cached
 - **FallbackCacheDuration**: Fallback cache duration for responses without explicit caching headers (default: `TimeSpan.MinValue`, meaning responses without caching headers are not cached)
 - **CompressionThreshold**: Minimum content size in bytes to enable compression (default: 1024 bytes). Set to 0 or negative value to disable compression
@@ -354,7 +355,9 @@ Only GET and HEAD requests are cached. Responses are cached when:
 Cache keys are generated from:
 - HTTP method
 - Request URI
-- Vary header values from the response
+- Optional configured `VaryHeaders` request values
+
+When reading from cache, the handler then enforces the stored response `Vary` values and selects a matching variant.
 
 ### Conditional Requests
 
@@ -372,11 +375,11 @@ The handler is designed for high-performance scenarios with several key optimiza
 
 **Eliminates Base64 overhead in distributed cache:**
 
-- **Metadata** (small, ~1-2KB): Status code, headers, timestamps → Stored as JSON
+- **Metadata** (small, ~1-2KB): Status code, headers, timestamps, and variant metadata → Stored as JSON
 - **Content** (large, variable): Response body → **Stored as raw `byte[]`**
   - **No Base64 encoding** = 33% size savings
   - Content deduplication via SHA256 hash
-  - Same content shared across cache entries (different Vary headers)
+  - Same content shared across cache variants (different `Vary` selections)
 
 **Trade-offs:**
 - Two cache lookups (metadata + content) vs one lookup
