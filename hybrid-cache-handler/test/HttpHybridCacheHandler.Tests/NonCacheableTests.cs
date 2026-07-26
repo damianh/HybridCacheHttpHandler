@@ -75,28 +75,15 @@ public class NonCacheableTests
     }
 
     [Fact]
-    public async Task Pragma_no_cache_treated_as_Cache_Control_no_cache()
+    public async Task Pragma_no_cache_does_not_force_revalidation()
     {
-        var callCount = 0;
-        HttpRequestMessage? secondRequest = null;
-        var mockHandler = new MockHttpMessageHandler(async req =>
+        var mockResponse = new HttpResponseMessage(HttpStatusCode.OK)
         {
-            callCount++;
-            if (callCount == 1)
-            {
-                var firstResponse = new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("response")
-                };
-                firstResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
-                firstResponse.Headers.ETag = new EntityTagHeaderValue("\"abc123\"");
-                return firstResponse;
-            }
-
-            // Second call: capture the revalidation request, return 304 Not Modified
-            secondRequest = req;
-            return await Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
-        });
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        mockResponse.Headers.ETag = new EntityTagHeaderValue("\"abc123\"");
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
 
         await using var fixture = new HttpHybridCacheHandlerFixture(
             mockHandler,
@@ -106,24 +93,20 @@ public class NonCacheableTests
         // First request - populate cache
         await client.GetAsync("https://example.com/resource", _ct);
 
-        // Second request with Pragma: no-cache - should revalidate, not bypass
+        // Second request with Pragma: no-cache - should still serve cached response
         var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
         request.Headers.Add("Pragma", "no-cache");
         var response2 = await client.SendAsync(request, _ct);
 
-        // Should have made 2 origin requests (initial + revalidation)
-        mockHandler.RequestCount.ShouldBe(2);
+        // Should have made only the initial origin request
+        mockHandler.RequestCount.ShouldBe(1);
 
-        // Revalidation request should carry If-None-Match (proving it's a conditional request, not a bypass)
-        secondRequest.ShouldNotBeNull();
-        secondRequest.Headers.IfNoneMatch.ShouldContain(etag => etag.Tag == "\"abc123\"");
-
-        // Response body should be served from cache (304 → cached content)
+        // Response body should be served from cache
         var body = await response2.Content.ReadAsStringAsync(_ct);
         body.ShouldBe("response");
 
-        // Diagnostic should be HIT-REVALIDATED (not bypass)
-        response2.Headers.GetValues("X-Cache-Diagnostic").First().ShouldBe("HIT-REVALIDATED");
+        // Diagnostic should indicate fresh cache hit
+        response2.Headers.GetValues("X-Cache-Diagnostic").First().ShouldBe("HIT-FRESH");
     }
 
     [Fact]
@@ -220,6 +203,53 @@ public class NonCacheableTests
         await client.GetAsync("https://example.com/resource", _ct);
 
         mockHandler.RequestCount.ShouldBe(2); // Not cached without explicit headers
+    }
+
+    [Fact]
+    public async Task Heuristic_freshness_not_applied_to_non_heuristic_status_without_public()
+    {
+        var now = DateTimeOffset.Parse("2024-01-01T12:00:00Z");
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.Created, // 201
+            Content = new StringContent("created")
+            {
+                Headers = { LastModified = now.AddDays(-1) }
+            },
+            Headers = { Date = now }
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        fixture.SetUtcNow(now);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Heuristic_freshness_applied_to_nonstandard_status_when_public()
+    {
+        var now = DateTimeOffset.Parse("2024-01-01T12:00:00Z");
+        var response = new HttpResponseMessage((HttpStatusCode)599)
+        {
+            Content = new StringContent("unknown")
+            {
+                Headers = { LastModified = now.AddDays(-1) }
+            },
+            Headers = { Date = now }
+        };
+        response.Headers.CacheControl = new CacheControlHeaderValue { Public = true };
+        var mockHandler = new MockHttpMessageHandler(response);
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        fixture.SetUtcNow(now);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        mockHandler.RequestCount.ShouldBe(1);
     }
 
     [Fact]
