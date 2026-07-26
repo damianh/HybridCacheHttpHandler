@@ -141,6 +141,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return response;
         }
 
+        NormalizeIfNoneMatchHeader(request);
         var hasRangeRequest = TryGetSingleByteRange(request, out var requestedRange);
 
         // Check request Cache-Control directives
@@ -555,6 +556,13 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     return unsatisfiedRangeResponse;
                 }
 
+                if (TryCreateConditionalNotModifiedResponse(request, cachedResponse, out var notModifiedResponse))
+                {
+                    CacheHits.Add(1, CreateMetricTags(request));
+                    AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, cachedResponse);
+                    return notModifiedResponse;
+                }
+
                 var response = await DeserializeResponseAsync(cachedResponse, ct);
                 if (response == null)
                 {
@@ -565,6 +573,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     CacheMisses.Add(1, CreateMetricTags(request));
                     return freshResponse;
                 }
+                ApplyAgeHeader(response, cachedResponse);
                 CacheHits.Add(1, CreateMetricTags(request));
                 AddDiagnosticHeaders(response, DiagnosticHeaders.HitFresh, cachedResponse);
                 return response;
@@ -1957,8 +1966,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
             CacheControlRegexes.UnqualifiedNoCache().IsMatch(cacheControlValue);
         var hasMustUnderstand = !string.IsNullOrWhiteSpace(cacheControlValue) &&
             CacheControlRegexes.MustUnderstand().IsMatch(cacheControlValue);
-        var parsedMaxAge = ParseDirectiveSeconds(cacheControlValue, CacheControlRegexes.MaxAge());
-        var parsedSharedMaxAge = ParseDirectiveSeconds(cacheControlValue, CacheControlRegexes.SharedMaxAge());
+        var parsedCacheControl = string.IsNullOrWhiteSpace(cacheControlValue)
+            ? default
+            : HttpCacheHeaderParser.ParseCacheControl([cacheControlValue]);
+        var parsedMaxAge = parsedCacheControl.MaxAge;
+        var parsedSharedMaxAge = parsedCacheControl.SharedMaxAge;
 
         var noStore = cacheControl?.NoStore == true || ContainsDirectiveToken(cacheControlValue, "no-store");
         var noCache = hasUnqualifiedNoCache || (cacheControl?.NoCache == true && qualifiedNoCacheHeaderNames.Length == 0);
@@ -2054,27 +2066,6 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         return [];
-    }
-
-    private static TimeSpan? ParseDirectiveSeconds(string cacheControlValue, Regex regex)
-    {
-        if (string.IsNullOrWhiteSpace(cacheControlValue))
-        {
-            return null;
-        }
-
-        var match = regex.Match(cacheControlValue);
-        if (!match.Success)
-        {
-            return null;
-        }
-
-        if (!long.TryParse(match.Groups[1].Value, out var seconds) || seconds < 0)
-        {
-            return null;
-        }
-
-        return TimeSpan.FromSeconds(seconds);
     }
 
     private static bool ContainsDirectiveToken(string cacheControlValue, string token)
@@ -2237,16 +2228,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
     private static TimeSpan? ParseAgeHeader(HttpResponseMessage response)
     {
-        if (response.Headers.TryGetValues("Age", out var ageValues))
-        {
-            var ageValue = ageValues.FirstOrDefault();
-            if (ageValue != null && int.TryParse(ageValue, out var ageSeconds))
-            {
-                return TimeSpan.FromSeconds(ageSeconds);
-            }
-        }
-
-        return null;
+        var ageValues = GetHeaderValues(response.Headers, "Age");
+        return ageValues.Length == 0 ? null : HttpCacheHeaderParser.ParseAge(ageValues);
     }
 
     private static Dictionary<string, string[]> CaptureHeaders(HttpHeaders headers)
