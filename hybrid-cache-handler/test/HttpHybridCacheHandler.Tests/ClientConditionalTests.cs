@@ -207,6 +207,75 @@ public class ClientConditionalTests
     }
 
     [Fact]
+    public async Task Client_If_None_Match_is_preserved_when_cache_entry_has_no_validator()
+    {
+        HttpRequestMessage? validationRequest = null;
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                return Task.FromResult(CreateCacheableResponse("cached"));
+            }
+
+            validationRequest = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+        conditionalRequest.Headers.TryAddWithoutValidation("If-None-Match", "\"abcdef\"");
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        validationRequest.ShouldNotBeNull();
+        validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldBe(["\"abcdef\""]);
+    }
+
+    [Fact]
+    public async Task Client_If_Modified_Since_is_preserved_when_cache_entry_has_no_validator()
+    {
+        HttpRequestMessage? validationRequest = null;
+        var requestCount = 0;
+        var ifModifiedSince = DateTimeOffset.UtcNow.AddMinutes(-10).ToString("R", CultureInfo.InvariantCulture);
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                return Task.FromResult(CreateCacheableResponse("cached"));
+            }
+
+            validationRequest = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+        conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", ifModifiedSince);
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        validationRequest.ShouldNotBeNull();
+        validationRequest.Headers.TryGetValues("If-Modified-Since", out var ifModifiedSinceValues).ShouldBeTrue();
+        ifModifiedSinceValues.ShouldBe([ifModifiedSince]);
+    }
+
+    [Fact]
     public async Task Weak_ETag_is_preserved_in_validation_request()
     {
         HttpRequestMessage? validationRequest = null;

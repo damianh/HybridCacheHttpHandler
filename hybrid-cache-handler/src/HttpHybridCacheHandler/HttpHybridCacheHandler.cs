@@ -269,13 +269,20 @@ public class HttpHybridCacheHandler : DelegatingHandler
             // Check if validation is required (no-cache request or no-cache response)
             if (!varyMatches || mustRevalidate || cachedResponse.NoCache)
             {
-                var validationRequest = CreateValidationRequest(request, cachedResponse);
+                var validationRequest = CreateValidationRequest(request, cachedResponse, out var validationUsesStoredValidator);
                 uncachedResponse = await base.SendAsync(validationRequest, ct);
                 var validationRawHeaders = CaptureRawHeaders(uncachedResponse);
 
                 // Handle 304 Not Modified
                 if (uncachedResponse.StatusCode == HttpStatusCode.NotModified)
                 {
+                    if (!validationUsesStoredValidator)
+                    {
+                        RestoreRawHeaders(uncachedResponse, validationRawHeaders);
+                        AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissRevalidated);
+                        return uncachedResponse;
+                    }
+
                     var updatedEntry = UpdateCachedEntry(cachedResponse, uncachedResponse);
                     try
                     {
@@ -416,7 +423,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             }
 
             // Response is stale, attempt validation
-            var staleValidationRequest = CreateValidationRequest(request, cachedResponse);
+            var staleValidationRequest = CreateValidationRequest(request, cachedResponse, out var staleValidationUsesStoredValidator);
 
             uncachedResponse = await base.SendAsync(staleValidationRequest, ct);
 
@@ -453,6 +460,13 @@ public class HttpHybridCacheHandler : DelegatingHandler
             // Handle 304 Not Modified
             if (uncachedResponse.StatusCode == HttpStatusCode.NotModified)
             {
+                if (!staleValidationUsesStoredValidator)
+                {
+                    RestoreRawHeaders(uncachedResponse, staleValidationRawHeaders);
+                    AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissRevalidated);
+                    return uncachedResponse;
+                }
+
                 // Update cached entry with new metadata from 304 response
                 var updatedEntry = UpdateCachedEntry(cachedResponse, uncachedResponse);
                 try
@@ -607,7 +621,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         HttpRequestMessage? revalidationRequest = null;
         try
         {
-            revalidationRequest = CreateValidationRequest(originalRequest, cachedResponse);
+            revalidationRequest = CreateValidationRequest(originalRequest, cachedResponse, out var backgroundValidationUsesStoredValidator);
             var revalidatedResponse = await base.SendAsync(revalidationRequest, Ct.None);
 
             // Snapshot raw headers before typed access normalizes them
@@ -615,6 +629,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
             if (revalidatedResponse.StatusCode == HttpStatusCode.NotModified)
             {
+                if (!backgroundValidationUsesStoredValidator)
+                {
+                    return;
+                }
+
                 var updatedEntry = UpdateCachedEntry(cachedResponse, revalidatedResponse);
                 try
                 {
@@ -671,13 +690,16 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
     private static HttpRequestMessage CreateValidationRequest(
         HttpRequestMessage originalRequest,
-        CachedHttpMetadata cachedResponse)
+        CachedHttpMetadata cachedResponse,
+        out bool usedStoredValidator)
     {
+        usedStoredValidator = !string.IsNullOrEmpty(cachedResponse.ETag) || cachedResponse.LastModified.HasValue;
         var request = new HttpRequestMessage(originalRequest.Method, originalRequest.RequestUri);
         foreach (var header in originalRequest.Headers)
         {
-            if (header.Key.Equals("If-None-Match", StringComparison.OrdinalIgnoreCase) ||
-                header.Key.Equals("If-Modified-Since", StringComparison.OrdinalIgnoreCase))
+            if (usedStoredValidator &&
+                (header.Key.Equals("If-None-Match", StringComparison.OrdinalIgnoreCase) ||
+                 header.Key.Equals("If-Modified-Since", StringComparison.OrdinalIgnoreCase)))
             {
                 continue;
             }
