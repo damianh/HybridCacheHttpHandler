@@ -570,6 +570,10 @@ public class ClientConditionalTests
             {
                 StoredMetadata.Add(metadata);
             }
+            else if (value is CachedHttpEntry entry)
+            {
+                StoredMetadata.AddRange(entry.Variants);
+            }
 
             await _inner.SetAsync(key, value, options, tags, cancellationToken);
         }
