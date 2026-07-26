@@ -490,6 +490,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var updatedAge = notModifiedResponse.Headers.TryGetValues("Age", out var ageValues)
             ? HttpCacheHeaderParser.ParseAge(ageValues)
             : null;
+        var ageAfterValidation = updatedAge
+            ?? (!updatedDate.HasValue ? currentAge : cached.Age);
 
         // Return updated metadata, preserving content reference
         return new CachedHttpMetadata
@@ -505,7 +507,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             LastModified = cached.LastModified,
             Expires = updatedExpires ?? cached.Expires,
             Date = updatedDate ?? cached.Date,
-            Age = updatedAge ?? currentAge,
+            Age = ageAfterValidation,
             VaryHeaders = cached.VaryHeaders,
             VaryHeaderValues = cached.VaryHeaderValues,
             StaleWhileRevalidate = hasCacheControl ? parsedCacheControl.StaleWhileRevalidate : cached.StaleWhileRevalidate,

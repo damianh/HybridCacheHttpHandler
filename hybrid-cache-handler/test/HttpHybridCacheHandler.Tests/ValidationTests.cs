@@ -151,6 +151,50 @@ public class ValidationTests
     }
 
     [Fact]
+    public async Task Response_304_with_date_and_without_age_allows_fresh_reuse()
+    {
+        var requestCount = 0;
+        var now = DateTimeOffset.Parse("2024-01-01T12:00:00Z");
+        var revalidationDate = now.AddSeconds(3);
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                var response = new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new StringContent("content")
+                };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(2) };
+                response.Headers.Date = now;
+                response.Headers.ETag = new EntityTagHeaderValue("\"123\"");
+                return response;
+            }
+
+            var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+            notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(2) };
+            notModifiedResponse.Headers.Date = revalidationDate;
+            notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"123\"");
+            return notModifiedResponse;
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        fixture.SetUtcNow(now);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        fixture.AdvanceTime(TimeSpan.FromSeconds(3));
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        fixture.AdvanceTime(TimeSpan.FromSeconds(1));
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Response_304_returns_cached_body()
     {
         var requestCount = 0;
