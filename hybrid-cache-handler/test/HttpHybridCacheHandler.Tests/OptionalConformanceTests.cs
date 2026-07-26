@@ -745,6 +745,49 @@ public class OptionalConformanceTests
     }
 
     [Fact]
+    public async Task Open_ended_range_does_not_serve_truncated_cached_partial_payload()
+    {
+        var originCalls = 0;
+        var mockHandler = new MockHttpMessageHandler(req =>
+        {
+            originCalls++;
+            if (originCalls == 1)
+            {
+                var truncatedPartial = new HttpResponseMessage(HttpStatusCode.PartialContent)
+                {
+                    Content = new StringContent("ab")
+                };
+                truncatedPartial.Headers.TryAddWithoutValidation("Cache-Control", "max-age=3600");
+                truncatedPartial.Content.Headers.ContentRange = new ContentRangeHeaderValue(0, 4, 5);
+                truncatedPartial.Headers.AcceptRanges.Add("bytes");
+                return Task.FromResult(truncatedPartial);
+            }
+
+            return Task.FromResult(CreatePartialResponse("abcde", 0, 4, 5));
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        var initialRangeRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/range-open-ended");
+        initialRangeRequest.Headers.Range = new RangeHeaderValue(0, 4);
+        await client.SendAsync(initialRangeRequest, _ct);
+
+        var openEndedRangeRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/range-open-ended");
+        openEndedRangeRequest.Headers.Range = new RangeHeaderValue(0, null);
+        var openEndedResponse = await client.SendAsync(openEndedRangeRequest, _ct);
+        var openEndedBody = await openEndedResponse.Content.ReadAsStringAsync(_ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
+        openEndedResponse.StatusCode.ShouldBe(HttpStatusCode.PartialContent);
+        openEndedBody.ShouldBe("abcde");
+        openEndedResponse.Content.Headers.ContentRange.ShouldNotBeNull();
+        openEndedResponse.Content.Headers.ContentRange.From.ShouldBe(0);
+        openEndedResponse.Content.Headers.ContentRange.To.ShouldBe(4);
+        openEndedResponse.Content.Headers.ContentRange.Length.ShouldBe(5);
+    }
+
+    [Fact]
     public async Task Suffix_range_does_not_use_cached_partial_without_total_length()
     {
         var originCalls = 0;

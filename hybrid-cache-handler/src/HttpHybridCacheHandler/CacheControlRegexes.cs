@@ -10,10 +10,10 @@ namespace DamianH.HttpHybridCacheHandler;
 /// </summary>
 internal static partial class CacheControlRegexes
 {
-    [GeneratedRegex(@"stale-while-revalidate=(\d+)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"stale-while-revalidate\s*=\s*(\d+)", RegexOptions.IgnoreCase)]
     internal static partial Regex StaleWhileRevalidate();
 
-    [GeneratedRegex(@"stale-if-error=(\d+)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"stale-if-error\s*=\s*(\d+)", RegexOptions.IgnoreCase)]
     internal static partial Regex StaleIfError();
 
     [GeneratedRegex(@"(?:^|,)\s*no-cache\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase)]

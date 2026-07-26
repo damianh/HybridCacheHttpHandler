@@ -158,45 +158,58 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     ? GenerateVaryAwareCacheKey(request, cacheMethod)
                     : null;
 
-                var onlyIfCachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
-                    cacheKey,
-                    _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
-                    cancellationToken: ct
-                );
+                var onlyIfCachedRequestUriTag = GetUriTag(request.RequestUri);
+                var cacheKeys = completeResponseCacheKey != null && !string.Equals(cacheKey, completeResponseCacheKey, StringComparison.Ordinal)
+                    ? new[] { cacheKey, completeResponseCacheKey }
+                    : new[] { cacheKey };
 
-                if (onlyIfCachedEntry == null && completeResponseCacheKey != null)
+                foreach (var candidateCacheKey in cacheKeys)
                 {
-                    onlyIfCachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
-                        completeResponseCacheKey,
-                        _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
-                        cancellationToken: ct
-                    );
-                }
+                    var onlyIfCachedEntry = await GetCacheEntryAsync(candidateCacheKey, ct);
+                    if (onlyIfCachedEntry == null)
+                    {
+                        continue;
+                    }
 
-                if (onlyIfCachedEntry != null)
-                {
+                    var onlyIfCachedVariant = VaryMatcher.SelectVariant(
+                        onlyIfCachedEntry,
+                        request,
+                        candidate => IsUsableForOnlyIfCached(candidate, request));
+                    if (onlyIfCachedVariant == null)
+                    {
+                        continue;
+                    }
+
                     if (request.Method != HttpMethod.Head &&
                         hasRangeRequest &&
-                        await TryServeRangeFromCachedMetadataAsync(onlyIfCachedEntry, requestedRange, request, ct) is { } cachedRangeResponse)
+                        await TryServeRangeFromCachedMetadataAsync(onlyIfCachedVariant, requestedRange, request, ct) is { } cachedRangeResponse)
                     {
-                        AddDiagnosticHeaders(cachedRangeResponse, DiagnosticHeaders.HitOnlyIfCached, onlyIfCachedEntry);
+                        AddDiagnosticHeaders(cachedRangeResponse, DiagnosticHeaders.HitOnlyIfCached, onlyIfCachedVariant);
                         return cachedRangeResponse;
                     }
 
-                    var response = await DeserializeResponseAsync(onlyIfCachedEntry, ct);
+                    var response = await DeserializeResponseAsync(onlyIfCachedVariant, ct);
                     if (response != null)
                     {
                         if (request.Method == HttpMethod.Head)
                         {
-                            var cachedHeadResponse = BuildMergedHeadResponse(response, onlyIfCachedEntry, request);
+                            var cachedHeadResponse = BuildMergedHeadResponse(response, onlyIfCachedVariant, request);
                             response.Dispose();
-                            AddDiagnosticHeaders(cachedHeadResponse, DiagnosticHeaders.HitOnlyIfCached, onlyIfCachedEntry);
+                            AddDiagnosticHeaders(cachedHeadResponse, DiagnosticHeaders.HitOnlyIfCached, onlyIfCachedVariant);
                             return cachedHeadResponse;
                         }
 
-                        AddDiagnosticHeaders(response, DiagnosticHeaders.HitOnlyIfCached, onlyIfCachedEntry);
+                        AddDiagnosticHeaders(response, DiagnosticHeaders.HitOnlyIfCached, onlyIfCachedVariant);
                         return response;
                     }
+
+                    await RemoveVariantFromEntryAsync(
+                        candidateCacheKey,
+                        onlyIfCachedRequestUriTag,
+                        onlyIfCachedEntry,
+                        onlyIfCachedVariant,
+                        request.RequestUri,
+                        ct);
                 }
             }
             catch (Exception ex)
@@ -1198,7 +1211,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
         else if (!requestedRange.To.HasValue && requestedEnd > payloadRangeEnd)
         {
-            requestedEnd = payloadRangeEnd;
+            return null;
         }
 
         if (requestedStart < payloadRangeStart || requestedEnd > payloadRangeEnd)
@@ -1501,7 +1514,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             : string.Empty;
 
     private static string NormalizeHeaderValues(IEnumerable<string> values)
-        => string.Join(",", values.Select(v => v.Trim().Replace(" ", "", StringComparison.Ordinal)));
+        => VaryMatcher.NormalizeHeaderValue(values);
 
     private bool TryCreateConditionalNotModifiedResponse(
         HttpRequestMessage request,

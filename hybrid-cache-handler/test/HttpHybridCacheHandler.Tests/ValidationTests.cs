@@ -122,7 +122,7 @@ public class ValidationTests
             if (requestCount == 2)
             {
                 var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
-                notModifiedResponse.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1, stale-if-error=10");
+                notModifiedResponse.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1, stale-if-error = 10");
                 notModifiedResponse.Headers.TryAddWithoutValidation("ETag", "\"v1\"");
                 return notModifiedResponse;
             }
