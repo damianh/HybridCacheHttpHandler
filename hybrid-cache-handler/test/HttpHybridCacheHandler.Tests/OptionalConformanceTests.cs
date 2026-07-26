@@ -162,7 +162,7 @@ public class OptionalConformanceTests
             Content = new StringContent("cdn")
         };
         response.Headers.TryAddWithoutValidation("Cache-Control", "no-store");
-        response.Headers.TryAddWithoutValidation("CDN-Cache-Control", "max-age = 60");
+        response.Headers.TryAddWithoutValidation("CDN-Cache-Control", "max-age=60");
 
         var mockHandler = new MockHttpMessageHandler(response);
         await using var fixture = new HttpHybridCacheHandlerFixture(
@@ -174,6 +174,31 @@ public class OptionalConformanceTests
         await client.GetAsync("https://example.com/cdn", _ct);
 
         mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData("max-age =100")]
+    [InlineData("max-age= 100")]
+    public async Task Shared_cache_ignores_targeted_max_age_with_space_around_equals(string targetedCacheControl)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("cdn")
+        };
+        response.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1");
+        response.Headers.TryAddWithoutValidation("CDN-Cache-Control", targetedCacheControl);
+
+        var mockHandler = new MockHttpMessageHandler(response);
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            options => options.Mode = CacheMode.Shared);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/cdn-invalid-targeted-max-age", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        await client.GetAsync("https://example.com/cdn-invalid-targeted-max-age", _ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
     }
 
     [Fact]

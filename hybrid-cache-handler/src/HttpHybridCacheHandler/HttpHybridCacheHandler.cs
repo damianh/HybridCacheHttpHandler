@@ -150,50 +150,53 @@ public class HttpHybridCacheHandler : DelegatingHandler
         // Handle only-if-cached
         if (requestCacheControl?.OnlyIfCached == true)
         {
-            var cacheMethod = request.Method == HttpMethod.Head ? HttpMethod.Get : null;
-            var cacheKey = GenerateVaryAwareCacheKey(request, cacheMethod, includeRange: hasRangeRequest);
-            var completeResponseCacheKey = hasRangeRequest
-                ? GenerateVaryAwareCacheKey(request, cacheMethod)
-                : null;
-
-            var cachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
-                cacheKey,
-                _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
-                cancellationToken: ct
-            );
-
-            if (cachedEntry == null && completeResponseCacheKey != null)
+            try
             {
-                cachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
-                    completeResponseCacheKey,
+                var cacheMethod = request.Method == HttpMethod.Head ? HttpMethod.Get : null;
+                var cacheKey = GenerateVaryAwareCacheKey(request, cacheMethod, includeRange: hasRangeRequest);
+                var completeResponseCacheKey = hasRangeRequest
+                    ? GenerateVaryAwareCacheKey(request, cacheMethod)
+                    : null;
+
+                var onlyIfCachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
+                    cacheKey,
                     _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
                     cancellationToken: ct
                 );
-            }
 
-            if (cachedEntry != null)
-            {
-                if (request.Method != HttpMethod.Head &&
-                    hasRangeRequest &&
-                    await TryServeRangeFromCachedMetadataAsync(cachedEntry, requestedRange, request, ct) is { } cachedRangeResponse)
+                if (onlyIfCachedEntry == null && completeResponseCacheKey != null)
                 {
-                    AddDiagnosticHeaders(cachedRangeResponse, DiagnosticHeaders.HitOnlyIfCached, cachedEntry);
-                    return cachedRangeResponse;
+                    onlyIfCachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
+                        completeResponseCacheKey,
+                        _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
+                        cancellationToken: ct
+                    );
                 }
 
-                var response = await DeserializeResponseAsync(cachedEntry, ct);
-                if (response != null)
+                if (onlyIfCachedEntry != null)
                 {
-                    if (request.Method == HttpMethod.Head)
+                    if (request.Method != HttpMethod.Head &&
+                        hasRangeRequest &&
+                        await TryServeRangeFromCachedMetadataAsync(onlyIfCachedEntry, requestedRange, request, ct) is { } cachedRangeResponse)
                     {
-                        var cachedHeadResponse = BuildMergedHeadResponse(response, cachedEntry, request);
-                        response.Dispose();
-                        AddDiagnosticHeaders(cachedHeadResponse, DiagnosticHeaders.HitOnlyIfCached, cachedEntry);
-                        return cachedHeadResponse;
+                        AddDiagnosticHeaders(cachedRangeResponse, DiagnosticHeaders.HitOnlyIfCached, onlyIfCachedEntry);
+                        return cachedRangeResponse;
                     }
 
-                    AddDiagnosticHeaders(response, DiagnosticHeaders.HitOnlyIfCached, cachedEntry);
-                    return response;
+                    var response = await DeserializeResponseAsync(onlyIfCachedEntry, ct);
+                    if (response != null)
+                    {
+                        if (request.Method == HttpMethod.Head)
+                        {
+                            var cachedHeadResponse = BuildMergedHeadResponse(response, onlyIfCachedEntry, request);
+                            response.Dispose();
+                            AddDiagnosticHeaders(cachedHeadResponse, DiagnosticHeaders.HitOnlyIfCached, onlyIfCachedEntry);
+                            return cachedHeadResponse;
+                        }
+
+                        AddDiagnosticHeaders(response, DiagnosticHeaders.HitOnlyIfCached, onlyIfCachedEntry);
+                        return response;
+                    }
                 }
             }
             catch (Exception ex)
@@ -256,7 +259,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             }
         }
 
-        CachedHttpMetadata? cachedResponse;
+        CachedHttpEntry? cachedEntry;
         try
         {
             cachedEntry = await _cache.GetOrCreateAsync(
@@ -1558,7 +1561,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return cachedResponse.LastModified.Value <= ifModifiedSinceDate;
         }
 
-        return cachedResponse.Date.HasValue && cachedResponse.Date.Value <= ifModifiedSinceDate;
+        return cachedResponse.Date.HasValue && cachedResponse.Date.Value >= ifModifiedSinceDate;
     }
 
     private static HttpResponseMessage CreateNotModifiedResponse(HttpRequestMessage request, CachedHttpMetadata cachedResponse)
@@ -2145,6 +2148,17 @@ public class HttpHybridCacheHandler : DelegatingHandler
             if (string.IsNullOrWhiteSpace(token))
             {
                 continue;
+            }
+
+            var rawToken = token;
+            var rawEqualsIndex = rawToken.IndexOf('=');
+            if (rawEqualsIndex > 0 &&
+                rawEqualsIndex < rawToken.Length - 1 &&
+                (char.IsWhiteSpace(rawToken[rawEqualsIndex - 1]) ||
+                 char.IsWhiteSpace(rawToken[rawEqualsIndex + 1])))
+            {
+                directives = new TargetedCacheDirectives();
+                return false;
             }
 
             token = NormalizeDirectiveToken(token);

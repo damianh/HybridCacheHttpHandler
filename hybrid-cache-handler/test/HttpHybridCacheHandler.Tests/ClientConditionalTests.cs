@@ -153,7 +153,7 @@ public class ClientConditionalTests
         await client.GetAsync("https://example.com/resource", _ct);
 
         var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
-        conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", responseDate.AddMinutes(10).ToString("R", CultureInfo.InvariantCulture));
+        conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", responseDate.AddMinutes(-10).ToString("R", CultureInfo.InvariantCulture));
         var response = await client.SendAsync(conditionalRequest, _ct);
 
         response.StatusCode.ShouldBe(HttpStatusCode.NotModified);

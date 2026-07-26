@@ -809,7 +809,6 @@ public class ValidationTests
                 StaleIfError = currentVariant.StaleIfError,
                 MustRevalidate = currentVariant.MustRevalidate,
                 NoCache = currentVariant.NoCache,
-                Public = currentVariant.Public,
                 IsCompressed = currentVariant.IsCompressed
             });
         }
