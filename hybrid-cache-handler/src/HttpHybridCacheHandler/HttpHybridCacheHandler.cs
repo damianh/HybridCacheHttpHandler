@@ -2231,9 +2231,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
             var rawValue = token[(equalsIndex + 1)..];
             if (key.Equals("max-age", StringComparison.OrdinalIgnoreCase) &&
                 long.TryParse(rawValue, out var seconds) &&
-                seconds >= 0)
+                seconds >= 0 &&
+                seconds <= TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerSecond)
             {
-                directives.MaxAge = TimeSpan.FromSeconds(seconds);
+                directives.MaxAge = TimeSpan.FromTicks(seconds * TimeSpan.TicksPerSecond);
             }
         }
 

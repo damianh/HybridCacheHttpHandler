@@ -202,6 +202,29 @@ public class OptionalConformanceTests
     }
 
     [Fact]
+    public async Task Shared_cache_ignores_targeted_max_age_when_out_of_range()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("cdn")
+        };
+        response.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1");
+        response.Headers.TryAddWithoutValidation("CDN-Cache-Control", $"max-age={long.MaxValue}");
+
+        var mockHandler = new MockHttpMessageHandler(response);
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            options => options.Mode = CacheMode.Shared);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/cdn-out-of-range-targeted-max-age", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        await client.GetAsync("https://example.com/cdn-out-of-range-targeted-max-age", _ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Shared_cache_with_targeted_cache_control_still_honors_qualified_no_cache_from_cache_control()
     {
         var response = new HttpResponseMessage(HttpStatusCode.OK)
