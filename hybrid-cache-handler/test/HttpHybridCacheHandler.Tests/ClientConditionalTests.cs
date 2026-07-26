@@ -30,6 +30,9 @@ public class ClientConditionalTests
         var response = await client.SendAsync(conditionalRequest, _ct);
 
         response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        response.Content.Headers.Contains("Content-Length").ShouldBeFalse();
+        response.Content.Headers.Contains("Content-Type").ShouldBeFalse();
+        response.Content.Headers.Contains("Content-Encoding").ShouldBeFalse();
         response.Headers.TryGetValues("ETag", out var etagValues).ShouldBeTrue();
         etagValues.ShouldContain("\"abcdef\"");
         mockHandler.RequestCount.ShouldBe(1);
@@ -296,6 +299,59 @@ public class ClientConditionalTests
         abcValues.ShouldBe(["456"]);
         validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
         ifNoneMatchValues.ShouldBe(["\"abcdef\""]);
+    }
+
+    [Fact]
+    public async Task Fresh_Vary_mismatch_with_200_response_updates_cached_variant()
+    {
+        HttpRequestMessage? validationRequest = null;
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                return Task.FromResult(CreateCacheableResponse("variant-1", response =>
+                {
+                    response.Headers.ETag = new EntityTagHeaderValue("\"abcdef\"");
+                    response.Headers.TryAddWithoutValidation("Vary", "Abc");
+                }));
+            }
+
+            if (requestCount == 2)
+            {
+                validationRequest = request;
+                return Task.FromResult(CreateCacheableResponse("variant-2", response =>
+                {
+                    response.Headers.ETag = new EntityTagHeaderValue("\"ghijkl\"");
+                    response.Headers.TryAddWithoutValidation("Vary", "Abc");
+                }));
+            }
+
+            return Task.FromResult(CreateCacheableResponse("variant-3"));
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var firstRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        firstRequest.Headers.TryAddWithoutValidation("Abc", "123");
+        _ = await client.SendAsync(firstRequest, _ct);
+
+        var secondRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        secondRequest.Headers.TryAddWithoutValidation("Abc", "456");
+        var secondResponse = await client.SendAsync(secondRequest, _ct);
+
+        var thirdRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        thirdRequest.Headers.TryAddWithoutValidation("Abc", "456");
+        var thirdResponse = await client.SendAsync(thirdRequest, _ct);
+
+        requestCount.ShouldBe(2);
+        validationRequest.ShouldNotBeNull();
+        validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldBe(["\"abcdef\""]);
+        (await secondResponse.Content.ReadAsStringAsync(_ct)).ShouldBe("variant-2");
+        (await thirdResponse.Content.ReadAsStringAsync(_ct)).ShouldBe("variant-2");
     }
 
     private static HttpResponseMessage CreateCacheableResponse(string body, Action<HttpResponseMessage>? configure = null)

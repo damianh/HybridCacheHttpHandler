@@ -300,7 +300,38 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     return response;
                 }
 
-                // Got a new response, cache it
+                // Got a new response, update the cached entry if cacheable
+                if (IsResponseCacheable(uncachedResponse, validationRequest))
+                {
+                    var freshResponse = await SerializeResponse(uncachedResponse, validationRawHeaders, validationRequest);
+                    if (freshResponse != null)
+                    {
+                        try
+                        {
+                            await _cache.SetAsync(cacheKey2, freshResponse, CreateCacheEntryOptions(freshResponse), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.CacheWriteFailed(request.RequestUri, ex);
+                        }
+                    }
+                }
+                else
+                {
+                    var responseCacheControl = uncachedResponse.Headers.CacheControl;
+                    if (responseCacheControl?.NoStore == true)
+                    {
+                        try
+                        {
+                            await _cache.RemoveAsync(cacheKey2, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.CacheRemoveFailed(request.RequestUri, ex);
+                        }
+                    }
+                }
+
                 CacheMisses.Add(1, CreateMetricTags(request));
                 RestoreRawHeaders(uncachedResponse, validationRawHeaders);
                 AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissRevalidated);
@@ -805,26 +836,26 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var response = new HttpResponseMessage(HttpStatusCode.NotModified)
         {
             RequestMessage = request,
-            Content = new ByteArrayContent([])
+            Content = new NoBodyHttpContent()
         };
 
         foreach (var header in cachedResponse.Headers)
         {
             response.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
-
-        foreach (var header in cachedResponse.ContentHeaders)
-        {
-            if (header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
-        }
-
-        response.Content.Headers.Remove("Content-Length");
         return response;
+    }
+
+    private sealed class NoBodyHttpContent : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+            => Task.CompletedTask;
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
     }
 
     private static bool TryParseHttpDate(string? value, out DateTimeOffset parsed)
@@ -1473,7 +1504,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 {
                     if (request.Headers.TryGetValues(varyHeader, out var requestHeaderValues))
                     {
-                        // Normalize: join multiple values and trim whitespace
+                        // Normalize: join multiple values and remove spaces from each value
                         var normalizedValue = NormalizeHeaderValues(requestHeaderValues);
                         varyHeaderValues[varyHeader] = normalizedValue;
                     }
