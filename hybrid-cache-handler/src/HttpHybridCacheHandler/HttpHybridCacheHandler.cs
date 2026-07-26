@@ -1024,6 +1024,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
     {
         var headResponse = await base.SendAsync(request, ct);
         var getCacheKey = GenerateVaryAwareCacheKey(request, cacheMethod: HttpMethod.Get);
+        var requestUriTag = GetUriTag(request.RequestUri);
 
         var cachedGetEntry = await GetCacheEntryAsync(getCacheKey, ct);
         var cachedGet = cachedGetEntry == null
@@ -1048,7 +1049,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             try
             {
                 var updatedEntry = ReplaceVariant(cachedGetEntry!, cachedGet, updated);
-                await _cache.SetAsync(getCacheKey, updatedEntry, CreateCacheEntryOptions(updatedEntry), cancellationToken: ct);
+                await _cache.SetAsync(getCacheKey, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
             }
             catch (Exception ex)
             {
@@ -1877,7 +1878,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             }
         }
 
-        if (currentAge < freshnessLifetime)
+        if (currentAge < freshnessLifetime.Value)
         {
             return true;
         }
