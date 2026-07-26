@@ -6,6 +6,7 @@ using System.Net;
 
 namespace DamianH.HttpHybridCacheHandler;
 
+[Collection(CultureSensitiveTestCollection.Name)]
 public class AgeHeaderTests
 {
     private readonly Ct _ct = TestContext.Current.CancellationToken;

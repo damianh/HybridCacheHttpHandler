@@ -502,7 +502,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             Headers = cached.Headers,
             ContentHeaders = cached.ContentHeaders,
             CachedAt = now,
-            MaxAge = updatedMaxAge ?? cached.MaxAge,
+            MaxAge = hasCacheControl ? updatedMaxAge : cached.MaxAge,
             ETag = cached.ETag,
             LastModified = cached.LastModified,
             Expires = updatedExpires ?? cached.Expires,
