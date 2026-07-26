@@ -535,6 +535,25 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 {
                     // A full GET cannot be satisfied from a stored partial response.
                     var partialBypassResponse = await base.SendAsync(request, ct);
+                    var partialBypassRawHeaders = CaptureRawHeaders(partialBypassResponse);
+
+                    if (IsResponseCacheable(partialBypassResponse, request))
+                    {
+                        var replacement = await SerializeResponse(partialBypassResponse, partialBypassRawHeaders, request);
+                        if (replacement != null)
+                        {
+                            try
+                            {
+                                await _cache.SetAsync(cacheKey2, replacement, CreateCacheEntryOptions(replacement), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.CacheWriteFailed(request.RequestUri, ex);
+                            }
+                        }
+                    }
+
+                    RestoreRawHeaders(partialBypassResponse, partialBypassRawHeaders);
                     AddDiagnosticHeaders(partialBypassResponse, DiagnosticHeaders.Miss);
                     CacheMisses.Add(1, CreateMetricTags(request));
                     return partialBypassResponse;
@@ -1231,10 +1250,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
     private static bool HasConflictingValidators(CachedHttpMetadata cached, HttpResponseMessage response)
     {
-        var responseEtag = response.Headers.ETag?.Tag;
+        var responseEtag = GetHeaderValues(response.Headers, "ETag").FirstOrDefault();
         if (!string.IsNullOrEmpty(cached.ETag) &&
             !string.IsNullOrEmpty(responseEtag) &&
-            !string.Equals(cached.ETag, responseEtag, StringComparison.Ordinal))
+            !WeakEntityTagEquals(cached.ETag, responseEtag))
         {
             return true;
         }

@@ -391,6 +391,47 @@ public class OptionalConformanceTests
     }
 
     [Fact]
+    public async Task Head_refresh_treats_equivalent_weak_and_strong_etags_as_non_conflicting()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(req =>
+        {
+            requestCount++;
+            if (req.Method == HttpMethod.Head)
+            {
+                var head = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(string.Empty)
+                };
+                head.Headers.TryAddWithoutValidation("Cache-Control", "max-age=120");
+                head.Headers.TryAddWithoutValidation("ETag", "\"v1\"");
+                return Task.FromResult(head);
+            }
+
+            var get = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("v1")
+            };
+            get.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1");
+            get.Headers.TryAddWithoutValidation("ETag", "w/ \"v1\"");
+            return Task.FromResult(get);
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/head-weak-strong-equivalent", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, "https://example.com/head-weak-strong-equivalent"), _ct);
+
+        var response = await client.GetAsync("https://example.com/head-weak-strong-equivalent", _ct);
+        var body = await response.Content.ReadAsStringAsync(_ct);
+
+        requestCount.ShouldBe(2); // Initial GET + HEAD only (final GET served from cache)
+        body.ShouldBe("v1");
+    }
+
+    [Fact]
     public async Task Head_refresh_with_null_content_does_not_invalidate_cached_get()
     {
         var sequenceHandler = new SequenceMessageHandler(req =>
@@ -718,7 +759,7 @@ public class OptionalConformanceTests
     }
 
     [Fact]
-    public async Task Full_get_bypasses_cached_partial_response()
+    public async Task Full_get_replaces_cached_partial_response_when_origin_returns_cacheable_full_response()
     {
         var requestRanges = new List<string?>();
         var originCalls = 0;
@@ -752,15 +793,19 @@ public class OptionalConformanceTests
         using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/full-after-partial", _ct);
-        var fullResponse = await client.GetAsync("https://example.com/full-after-partial", _ct);
-        var body = await fullResponse.Content.ReadAsStringAsync(_ct);
+        var firstFullResponse = await client.GetAsync("https://example.com/full-after-partial", _ct);
+        var secondFullResponse = await client.GetAsync("https://example.com/full-after-partial", _ct);
+        var firstBody = await firstFullResponse.Content.ReadAsStringAsync(_ct);
+        var secondBody = await secondFullResponse.Content.ReadAsStringAsync(_ct);
 
         mockHandler.RequestCount.ShouldBe(2);
         requestRanges.Count.ShouldBe(2);
         requestRanges[0].ShouldBeNull();
         requestRanges[1].ShouldBeNull();
-        fullResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
-        body.ShouldBe("abcdef");
+        firstFullResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        secondFullResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        firstBody.ShouldBe("abcdef");
+        secondBody.ShouldBe("abcdef");
     }
 
     [Fact]

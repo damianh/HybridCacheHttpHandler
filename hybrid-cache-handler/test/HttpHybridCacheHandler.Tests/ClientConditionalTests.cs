@@ -244,7 +244,10 @@ public class ClientConditionalTests
             }
 
             validationRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = new StringContent(string.Empty)
+            });
         });
 
         await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
@@ -279,7 +282,10 @@ public class ClientConditionalTests
             }
 
             validationRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = new StringContent(string.Empty)
+            });
         });
 
         await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
@@ -319,7 +325,10 @@ public class ClientConditionalTests
             }
 
             validationRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = new StringContent(string.Empty)
+            });
         });
 
         await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
@@ -376,7 +385,10 @@ public class ClientConditionalTests
             }
 
             validationRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = new StringContent(string.Empty)
+            });
         });
 
         await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
@@ -411,7 +423,10 @@ public class ClientConditionalTests
             }
 
             validationRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = new StringContent(string.Empty)
+            });
         });
 
         await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
