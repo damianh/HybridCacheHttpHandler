@@ -60,10 +60,62 @@ internal static class VaryMatcher
     public static string NormalizeHeaderValue(IEnumerable<string> values)
     {
         var normalizedTokens = values
-            .Select(static value => value.Trim())
+            .SelectMany(static value => SplitHeaderValue(value))
             .Where(static token => token.Length > 0);
 
         return string.Join(",", normalizedTokens);
+    }
+
+    private static IEnumerable<string> SplitHeaderValue(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            yield break;
+        }
+
+        var tokenStart = 0;
+        var inQuotes = false;
+        var isEscaped = false;
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (isEscaped)
+            {
+                isEscaped = false;
+                continue;
+            }
+
+            if (inQuotes && c == '\\')
+            {
+                isEscaped = true;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inQuotes = !inQuotes;
+                continue;
+            }
+
+            if (c != ',' || inQuotes)
+            {
+                continue;
+            }
+
+            var token = value[tokenStart..i].Trim();
+            if (token.Length > 0)
+            {
+                yield return token;
+            }
+
+            tokenStart = i + 1;
+        }
+
+        var trailingToken = value[tokenStart..].Trim();
+        if (trailingToken.Length > 0)
+        {
+            yield return trailingToken;
+        }
     }
 
     private static bool TryGetVariantMatchScore(
