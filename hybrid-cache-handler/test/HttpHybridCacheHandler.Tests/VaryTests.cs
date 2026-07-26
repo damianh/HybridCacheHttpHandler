@@ -791,6 +791,40 @@ public class VaryTests
     }
 
     [Fact]
+    public void BuildVariantSignature_normalizes_legacy_Vary_header_names()
+    {
+        var legacySignature = VaryMatcher.BuildVariantSignature(
+            [null!, " ", "*", "Foo Bar", " Foo ", "foo"],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Foo"] = "1"
+            });
+
+        var normalizedSignature = VaryMatcher.BuildVariantSignature(
+            ["Foo"],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Foo"] = "1"
+            });
+
+        legacySignature.ShouldBe("foo=1");
+        legacySignature.ShouldBe(normalizedSignature);
+    }
+
+    [Fact]
+    public void BuildVariantSignature_returns_no_vary_when_only_invalid_headers_are_present()
+    {
+        var signature = VaryMatcher.BuildVariantSignature(
+            [null!, " ", "*", "Foo Bar"],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Foo"] = "1"
+            });
+
+        signature.ShouldBe("<no-vary>");
+    }
+
+    [Fact]
     public async Task Colliding_Vary_header_values_do_not_replace_existing_variant()
     {
         var requestCount = 0;
