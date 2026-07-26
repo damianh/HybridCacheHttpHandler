@@ -21,7 +21,11 @@ internal sealed class ContentCache(HybridCache cache)
     /// Stores content in cache and returns its key.
     /// Uses content hash for deduplication.
     /// </summary>
-    public async Task<string> StoreContentAsync(byte[] content, HybridCacheEntryOptions? options, Ct ct)
+    public async Task<string> StoreContentAsync(
+        byte[] content,
+        HybridCacheEntryOptions? options,
+        IEnumerable<string>? tags,
+        Ct ct)
     {
         var hash = ComputeContentHash(content);
         var contentKeyPrefix = "httpcache:content:";
@@ -29,7 +33,7 @@ internal sealed class ContentCache(HybridCache cache)
 
         // Store content as byte[] - no serialization overhead!
         // HybridCache treats byte[] as a primitive type and stores it directly
-        await cache.SetAsync(contentKey, content, options, cancellationToken: ct);
+        await cache.SetAsync(contentKey, content, options, tags: tags, cancellationToken: ct);
 
         return contentKey;
     }

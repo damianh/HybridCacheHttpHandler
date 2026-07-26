@@ -3,6 +3,8 @@
 
 using System.Net;
 using System.Net.Http.Headers;
+using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DamianH.HttpHybridCacheHandler;
 
@@ -209,6 +211,31 @@ public class InvalidationTests
         mockHandler.RequestCount.ShouldBe(2);
     }
 
+    [Fact]
+    public async Task Cached_content_entries_are_tagged_with_request_uri_for_invalidation()
+    {
+        var cache = new RecordingHybridCache();
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            if (request.Method == HttpMethod.Post)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            }
+
+            return Task.FromResult(CreateCacheableResponse("value"));
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler, customCache: cache);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct); // cache content + metadata
+        await client.PostAsync("https://example.com/resource", new StringContent("x"), _ct); // invalidate by tag
+
+        cache.ContentEntryTags.ShouldContain(tags =>
+            tags.Contains("httpcache:uri:https://example.com/resource"));
+        cache.RemoveByTagCalls.ShouldContain("httpcache:uri:https://example.com/resource");
+    }
+
     private static HttpResponseMessage CreateCacheableResponse(string content)
     {
         var response = new HttpResponseMessage(HttpStatusCode.OK)
@@ -220,5 +247,62 @@ public class InvalidationTests
             MaxAge = TimeSpan.FromHours(1)
         };
         return response;
+    }
+
+    private sealed class RecordingHybridCache : HybridCache
+    {
+        private readonly HybridCache _inner = CreateInnerCache();
+
+        public List<string[]> ContentEntryTags { get; } = [];
+        public List<string> RemoveByTagCalls { get; } = [];
+
+        private static HybridCache CreateInnerCache()
+        {
+            var services = new ServiceCollection();
+            services.AddHybridCache();
+            return services.BuildServiceProvider().GetRequiredService<HybridCache>();
+        }
+
+        public override ValueTask<T> GetOrCreateAsync<TState, T>(
+            string key,
+            TState state,
+            Func<TState, Ct, ValueTask<T>> factory,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default) =>
+            _inner.GetOrCreateAsync(key, state, factory, options, tags, cancellationToken);
+
+        public override async ValueTask SetAsync<T>(
+            string key,
+            T value,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default)
+        {
+            if (key.StartsWith("httpcache:content:", StringComparison.Ordinal))
+            {
+                ContentEntryTags.Add((tags ?? []).ToArray());
+            }
+
+            await _inner.SetAsync(key, value, options, tags, cancellationToken);
+        }
+
+        public override ValueTask RemoveAsync(string key, Ct cancellationToken = default) =>
+            _inner.RemoveAsync(key, cancellationToken);
+
+        public override ValueTask RemoveAsync(IEnumerable<string> keys, Ct cancellationToken = default) =>
+            _inner.RemoveAsync(keys, cancellationToken);
+
+        public override ValueTask RemoveByTagAsync(string tag, Ct cancellationToken = default)
+        {
+            RemoveByTagCalls.Add(tag);
+            return _inner.RemoveByTagAsync(tag, cancellationToken);
+        }
+
+        public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default)
+        {
+            RemoveByTagCalls.AddRange(tags);
+            return _inner.RemoveByTagAsync(tags, cancellationToken);
+        }
     }
 }

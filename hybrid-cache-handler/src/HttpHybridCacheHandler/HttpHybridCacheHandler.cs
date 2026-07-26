@@ -1160,7 +1160,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         // Store content separately (always, to avoid Base64 encoding)
         // Store content first (write order: content before metadata for atomicity)
-        var contentKey = await _contentCache.StoreContentAsync(contentToCache, null, Ct.None);
+        var requestUriTag = GetUriTag(request?.RequestUri);
+        IEnumerable<string>? contentTags = requestUriTag == null ? null : [requestUriTag];
+        var contentKey = await _contentCache.StoreContentAsync(contentToCache, null, contentTags, Ct.None);
 
         // Restore response content so caller can use it (content was consumed during read)
         response.Content = new ByteArrayContent(originalContent);
