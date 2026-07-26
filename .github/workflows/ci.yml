@@ -79,3 +79,30 @@ jobs:
         echo "✅ Build completed" >> $GITHUB_STEP_SUMMARY
         echo "✅ Tests executed" >> $GITHUB_STEP_SUMMARY
         echo "✅ NuGet packages created" >> $GITHUB_STEP_SUMMARY
+
+  cache-conformance:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Run RFC 9111 conformance suite
+      run: ./hybrid-cache-handler/conformance/run-conformance.sh
+
+    - name: Upload conformance results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cache-conformance-results
+        path: hybrid-cache-handler/conformance/results.json
+        if-no-files-found: ignore
