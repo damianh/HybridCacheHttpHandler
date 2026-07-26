@@ -411,7 +411,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             // Check if validation is required (no-cache request or no-cache response)
             if (revalidateMismatchedVariant || mustRevalidate || cachedResponse.NoCache)
             {
-                var validationRequest = CreateValidationRequest(request, cachedResponse, out var validationUsesStoredValidator);
+                using var validationRequest = CreateValidationRequest(request, cachedResponse, out var validationUsesStoredValidator);
                 uncachedResponse = await base.SendAsync(validationRequest, ct);
                 var validationRawHeaders = CaptureRawHeaders(uncachedResponse);
 
@@ -659,7 +659,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             }
 
             // Response is stale, attempt validation
-            var staleValidationRequest = CreateValidationRequest(request, cachedResponse, out var staleValidationUsesStoredValidator);
+            using var staleValidationRequest = CreateValidationRequest(request, cachedResponse, out var staleValidationUsesStoredValidator);
             var stalenessForValidation = CalculateStaleness(cachedResponse);
 
             RawHeaderSnapshot staleValidationRawHeaders;
@@ -1488,36 +1488,6 @@ public class HttpHybridCacheHandler : DelegatingHandler
         request.Headers.Remove("If-None-Match");
         request.Headers.TryAddWithoutValidation("If-None-Match", string.Join(", ", normalized));
     }
-
-    private bool MatchesStoredVaryHeaders(CachedHttpMetadata cachedResponse, HttpRequestMessage request)
-    {
-        if (cachedResponse.VaryHeaders is not { Length: > 0 })
-        {
-            return true;
-        }
-
-        if (cachedResponse.VaryHeaderValues is null)
-        {
-            return false;
-        }
-
-        foreach (var varyHeader in cachedResponse.VaryHeaders)
-        {
-            var requestValue = GetNormalizedHeaderValue(request, varyHeader);
-            cachedResponse.VaryHeaderValues.TryGetValue(varyHeader, out var cachedValue);
-            if (!string.Equals(cachedValue ?? string.Empty, requestValue, StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static string GetNormalizedHeaderValue(HttpRequestMessage request, string headerName)
-        => request.Headers.TryGetValues(headerName, out var values)
-            ? NormalizeHeaderValues(values)
-            : string.Empty;
 
     private static string NormalizeHeaderValues(IEnumerable<string> values)
         => VaryMatcher.NormalizeHeaderValue(values);

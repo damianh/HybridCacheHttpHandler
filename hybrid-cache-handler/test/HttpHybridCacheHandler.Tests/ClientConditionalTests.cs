@@ -139,7 +139,30 @@ public class ClientConditionalTests
     }
 
     [Fact]
-    public async Task Fresh_cached_response_without_Last_Modified_uses_Date_for_If_Modified_Since()
+    public async Task Fresh_cached_response_without_Last_Modified_and_Date_before_If_Modified_Since_returns_200()
+    {
+        var responseDate = DateTimeOffset.UtcNow;
+        var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached", response =>
+        {
+            response.Headers.Date = responseDate;
+        }));
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", responseDate.AddMinutes(10).ToString("R", CultureInfo.InvariantCulture));
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await response.Content.ReadAsStringAsync(_ct)).ShouldBe("cached");
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Fresh_cached_response_without_Last_Modified_and_Date_after_If_Modified_Since_returns_304()
     {
         var responseDate = DateTimeOffset.UtcNow;
         var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached", response =>
@@ -593,17 +616,24 @@ public class ClientConditionalTests
         return response;
     }
 
-    private sealed class RecordingHybridCache : HybridCache
+    private sealed class RecordingHybridCache : HybridCache, IDisposable
     {
-        private readonly HybridCache _inner = CreateInnerCache();
+        private readonly ServiceProvider _serviceProvider;
+        private readonly HybridCache _inner;
 
         public List<CachedHttpMetadata> StoredMetadata { get; } = [];
 
-        private static HybridCache CreateInnerCache()
+        public RecordingHybridCache()
+        {
+            _serviceProvider = CreateServiceProvider();
+            _inner = _serviceProvider.GetRequiredService<HybridCache>();
+        }
+
+        private static ServiceProvider CreateServiceProvider()
         {
             var services = new ServiceCollection();
             services.AddHybridCache();
-            return services.BuildServiceProvider().GetRequiredService<HybridCache>();
+            return services.BuildServiceProvider();
         }
 
         public override ValueTask<T> GetOrCreateAsync<TState, T>(
@@ -645,6 +675,11 @@ public class ClientConditionalTests
 
         public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default) =>
             _inner.RemoveByTagAsync(tags, cancellationToken);
+
+        public void Dispose()
+        {
+            _serviceProvider.Dispose();
+        }
     }
 
     private sealed class SingleResponseMessageHandler(HttpResponseMessage response) : HttpMessageHandler

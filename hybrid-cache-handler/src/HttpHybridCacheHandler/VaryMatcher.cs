@@ -47,14 +47,28 @@ internal static class VaryMatcher
             return "<no-vary>";
         }
 
-        var parts = varyHeaders
-            .Where(static h => !string.IsNullOrWhiteSpace(h))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+        var normalizedHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rawVaryHeader in varyHeaders)
+        {
+            if (!TryNormalizeVaryHeaderName(rawVaryHeader, out var normalizedVaryHeader))
+            {
+                continue;
+            }
+
+            normalizedHeaders.Add(normalizedVaryHeader);
+        }
+
+        if (normalizedHeaders.Count == 0)
+        {
+            return "<no-vary>";
+        }
+
+        var parts = normalizedHeaders
             .OrderBy(static h => h, StringComparer.OrdinalIgnoreCase)
             .Select(h =>
             {
                 var value = string.Empty;
-                if (varyHeaderValues != null && varyHeaderValues.TryGetValue(h, out var storedValue))
+                if (varyHeaderValues != null && TryGetStoredVaryHeaderValue(varyHeaderValues, h, out var storedValue))
                 {
                     value = storedValue;
                 }
@@ -215,7 +229,7 @@ internal static class VaryMatcher
 
         foreach (var c in candidate)
         {
-            if (!char.IsLetterOrDigit(c) &&
+            if (!char.IsAsciiLetterOrDigit(c) &&
                 c != '!' &&
                 c != '#' &&
                 c != '$' &&
@@ -238,6 +252,35 @@ internal static class VaryMatcher
 
         normalizedHeaderName = candidate;
         return true;
+    }
+
+    private static bool TryGetStoredVaryHeaderValue(
+        Dictionary<string, string> varyHeaderValues,
+        string normalizedHeaderName,
+        out string storedValue)
+    {
+        if (varyHeaderValues.TryGetValue(normalizedHeaderName, out var directValue))
+        {
+            storedValue = directValue ?? string.Empty;
+            return true;
+        }
+
+        foreach (var item in varyHeaderValues)
+        {
+            if (!TryNormalizeVaryHeaderName(item.Key, out var normalizedStoredHeaderName))
+            {
+                continue;
+            }
+
+            if (normalizedStoredHeaderName.Equals(normalizedHeaderName, StringComparison.OrdinalIgnoreCase))
+            {
+                storedValue = item.Value ?? string.Empty;
+                return true;
+            }
+        }
+
+        storedValue = string.Empty;
+        return false;
     }
 
     private static int CompareMatchScore(VariantMatchScore left, VariantMatchScore right)

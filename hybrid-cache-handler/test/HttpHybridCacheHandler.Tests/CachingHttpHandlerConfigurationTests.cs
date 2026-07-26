@@ -2,6 +2,8 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace DamianH.HttpHybridCacheHandler;
 
@@ -120,5 +122,65 @@ public class CachingHttpHandlerConfigurationTests
         options.TargetedCacheControlHeaderNames[0] = "X-Test-Cache-Control";
 
         HttpHybridCacheHandlerOptions.DefaultTargetedCacheControlHeaderNames[0].ShouldBe("CDN-Cache-Control");
+    }
+
+    [Fact]
+    public void Cap_max_cacheable_content_size_to_hybrid_cache_limit()
+    {
+        using var services = new ServiceCollection()
+            .AddHttpHybridCacheHandler(options => options.MaxCacheableContentSize = long.MaxValue)
+            .BuildServiceProvider();
+
+        var options = services.GetRequiredService<IOptions<HttpHybridCacheHandlerOptions>>().Value;
+        options.MaxCacheableContentSize.ShouldBe(int.MaxValue);
+    }
+
+    [Fact]
+    public void Propagate_mode_from_configure_delegate()
+    {
+        using var services = new ServiceCollection()
+            .AddHttpHybridCacheHandler(options => options.Mode = CacheMode.Shared)
+            .BuildServiceProvider();
+
+        var options = services.GetRequiredService<IOptions<HttpHybridCacheHandlerOptions>>().Value;
+        options.Mode.ShouldBe(CacheMode.Shared);
+    }
+
+    [Fact]
+    public void Propagate_targeted_cache_control_header_names_from_configure_delegate()
+    {
+        var expected = new[] { "X-Shared-Cache-Control", "Surrogate-Control" };
+
+        using var services = new ServiceCollection()
+            .AddHttpHybridCacheHandler(options => options.TargetedCacheControlHeaderNames = expected)
+            .BuildServiceProvider();
+
+        var options = services.GetRequiredService<IOptions<HttpHybridCacheHandlerOptions>>().Value;
+        options.TargetedCacheControlHeaderNames.ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task Configure_delegate_is_applied_once()
+    {
+        var configureInvocationCount = 0;
+        var mockResponse = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("response"),
+            Headers = { { "Cache-Control", "public, max-age=3600" } }
+        };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            options =>
+            {
+                configureInvocationCount++;
+                options.MaxCacheableContentSize = 1024 * 1024;
+            });
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync(TestUrl, _ct);
+
+        configureInvocationCount.ShouldBe(1);
     }
 }
