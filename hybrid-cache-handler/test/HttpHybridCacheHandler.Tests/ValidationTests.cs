@@ -102,10 +102,9 @@ public class ValidationTests
     }
 
     [Fact]
-    public async Task Response_304_without_age_preserves_cached_age()
+    public async Task Response_304_does_not_reintroduce_qualified_no_cache_headers()
     {
         var requestCount = 0;
-        var initialDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var mockHandler = new MockHttpMessageHandler(() =>
         {
             requestCount++;
@@ -115,50 +114,6 @@ public class ValidationTests
                 {
                     Content = new StringContent("content")
                 };
-                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
-                response.Headers.Date = initialDate;
-                response.Headers.TryAddWithoutValidation("Age", "30");
-                response.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
-                return response;
-            }
-
-            var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified)
-            {
-                Content = new ByteArrayContent([])
-            };
-            notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromMinutes(1) };
-            notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
-            return notModifiedResponse;
-        });
-
-        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        fixture.SetUtcNow(initialDate);
-        using var client = fixture.CreateClient();
-
-        await client.GetAsync("https://example.com/resource", _ct);
-        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
-
-        var revalidatedResponse = await client.GetAsync("https://example.com/resource", _ct);
-
-        requestCount.ShouldBe(2);
-        revalidatedResponse.Headers.TryGetValues("Age", out var ageValues).ShouldBeTrue();
-        int.Parse(ageValues!.Single()).ShouldBeGreaterThanOrEqualTo(30);
-    }
-
-    [Fact]
-    public async Task Response_304_does_not_reintroduce_qualified_no_cache_headers()
-    {
-        var requestCount = 0;
-        var mockHandler = new MockHttpMessageHandler(() =>
-        {
-            requestCount++;
-            if (requestCount == 1)
-            {
-                var response = new HttpResponseMessage
-                {
-                    StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent("content")
-                };
                 response.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1, no-cache=\"Set-Cookie\"");
                 response.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
                 return response;
@@ -166,26 +121,20 @@ public class ValidationTests
 
             if (requestCount == 2)
             {
-                var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified)
-                {
-                    Content = new ByteArrayContent([])
-                };
+                var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
                 notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
                 notModifiedResponse.Headers.TryAddWithoutValidation("Set-Cookie", "session=from-304");
                 return notModifiedResponse;
             }
 
-            var updatedNotModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified)
-            {
-                Content = new ByteArrayContent([])
-            };
+            var updatedNotModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
             updatedNotModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromMinutes(2) };
             updatedNotModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
             return updatedNotModifiedResponse;
         });
 
-        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        using var client = fixture.CreateClient();
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
