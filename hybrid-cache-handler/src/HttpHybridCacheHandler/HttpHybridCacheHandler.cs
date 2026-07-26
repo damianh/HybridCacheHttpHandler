@@ -1036,9 +1036,13 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return headResponse;
         }
 
+        var headDirectives = GetEffectiveCacheDirectives(headResponse);
+        var hasConflictingValidators = HasConflictingValidators(cachedGet, headResponse);
+
         if ((int)headResponse.StatusCode >= 200 &&
             (int)headResponse.StatusCode < 300 &&
-            !HasConflictingValidators(cachedGet, headResponse))
+            !headDirectives.NoStore &&
+            !hasConflictingValidators)
         {
             var updated = UpdateCachedEntry(cachedGet, headResponse);
             try
@@ -1059,7 +1063,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         if (headResponse.StatusCode == HttpStatusCode.Gone ||
             (int)headResponse.StatusCode >= 400 ||
-            HasConflictingValidators(cachedGet, headResponse))
+            headDirectives.NoStore ||
+            hasConflictingValidators)
         {
             try
             {

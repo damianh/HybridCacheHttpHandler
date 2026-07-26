@@ -439,6 +439,46 @@ public class OptionalConformanceTests
     }
 
     [Fact]
+    public async Task Head_response_with_no_store_invalidates_cached_get()
+    {
+        var getResponses = 0;
+        var mockHandler = new MockHttpMessageHandler(req =>
+        {
+            if (req.Method == HttpMethod.Head)
+            {
+                var head = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(string.Empty)
+                };
+                head.Headers.TryAddWithoutValidation("Cache-Control", "no-store");
+                head.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+                return Task.FromResult(head);
+            }
+
+            getResponses++;
+            var get = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($"v{getResponses}")
+            };
+            get.Headers.TryAddWithoutValidation("Cache-Control", "max-age=3600");
+            get.Headers.ETag = new EntityTagHeaderValue($"\"v{getResponses}\"");
+            return Task.FromResult(get);
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/head-no-store", _ct);
+        await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, "https://example.com/head-no-store"), _ct);
+
+        var response = await client.GetAsync("https://example.com/head-no-store", _ct);
+        var body = await response.Content.ReadAsStringAsync(_ct);
+
+        mockHandler.RequestCount.ShouldBe(3);
+        body.ShouldBe("v2");
+    }
+
+    [Fact]
     public async Task Head_refresh_treats_equivalent_weak_and_strong_etags_as_non_conflicting()
     {
         var requestCount = 0;
