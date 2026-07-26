@@ -163,6 +163,59 @@ public class RequestDirectivesTests
     }
 
     [Fact]
+    public async Task Request_max_age_rejects_response_older_than_requested_limit()
+    {
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("response"),
+            Headers =
+            {
+                { "Cache-Control", "max-age=3600" },
+                { "Age", "1800" }
+            }
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        // First request - populate cache with a response already 30 minutes old
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        // Second request asks for max-age=1 second; cached response should be rejected
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request.Headers.Add("Cache-Control", "max-age=1");
+        await client.SendAsync(request, _ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Request_max_stale_allows_serving_stale_response_within_limit()
+    {
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("response"),
+            Headers = { { "Cache-Control", "max-age=1" } }
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        // First request - populate cache
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        // Make response stale
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        // max-stale should allow using stale cache entry
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request.Headers.Add("Cache-Control", "max-stale=1000");
+        await client.SendAsync(request, _ct);
+
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task Only_if_cached_returns_cached_response_if_available()
     {
         var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
@@ -209,4 +262,3 @@ public class RequestDirectivesTests
         mockHandler.RequestCount.ShouldBe(0); // No request to origin
     }
 }
-

@@ -124,6 +124,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 var response = await DeserializeResponseAsync(cachedEntry, ct);
                 if (response != null)
                 {
+                    ApplyAgeHeader(response, cachedEntry);
                     AddDiagnosticHeaders(response, DiagnosticHeaders.HitOnlyIfCached, cachedEntry);
                     return response;
                 }
@@ -147,12 +148,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return response;
         }
 
-        // Handle no-cache or max-age=0 (or Pragma: no-cache per RFC 7234 §5.4) - require validation
-        var hasPragmaNoCache = request.Headers.TryGetValues("Pragma", out var pragmaValues)
-            && pragmaValues.Any(v => v.Equals("no-cache", StringComparison.OrdinalIgnoreCase));
+        // Handle no-cache or max-age=0 - require validation
         var mustRevalidate = requestCacheControl?.NoCache == true
-            || requestCacheControl?.MaxAge == TimeSpan.Zero
-            || hasPragmaNoCache;
+            || requestCacheControl?.MaxAge == TimeSpan.Zero;
 
         var cacheKey2 = GenerateVaryAwareCacheKey(request);
         var requestUriTag = GetUriTag(request.RequestUri);
@@ -181,13 +179,13 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     // Authorization header handling depends on cache mode
                     if (request.Headers.Authorization != null)
                     {
-                        var responseCacheControl = uncachedResponse.Headers.CacheControl;
+                        var responseCacheControl = ParseResponseCacheControl(uncachedResponse);
 
                         if (_options.Mode == CacheMode.Shared)
                         {
                             // Shared cache: Only cache if explicitly marked public or has s-maxage
-                            if (responseCacheControl?.Public != true &&
-                                responseCacheControl?.SharedMaxAge == null)
+                            if (!responseCacheControl.Public &&
+                                !responseCacheControl.SharedMaxAge.HasValue)
                             {
                                 return null;
                             }
@@ -195,8 +193,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         else // CacheMode.Private
                         {
                             // Private cache: Require explicit public or private directive for Authorization requests
-                            if (responseCacheControl?.Public != true &&
-                                responseCacheControl?.Private != true)
+                            if (!responseCacheControl.Public &&
+                                !responseCacheControl.Private)
                             {
                                 return null;
                             }
@@ -243,6 +241,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     _logger.CacheWriteFailed(request.RequestUri, ex);
                 }
                 RestoreRawHeaders(uncachedResponse, uncachedRawHeaders);
+                ApplyAgeHeader(uncachedResponse, cachedResponse);
                 AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.Miss);
                 CacheMisses.Add(1, CreateMetricTags(request));
                 return uncachedResponse;
@@ -278,6 +277,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
                         return uncachedResponse;
                     }
+                    ApplyAgeHeader(response, updatedEntry);
                     AddDiagnosticHeaders(response, DiagnosticHeaders.HitRevalidated, updatedEntry);
                     return response;
                 }
@@ -303,6 +303,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     CacheMisses.Add(1, CreateMetricTags(request));
                     return freshResponse;
                 }
+                ApplyAgeHeader(response, cachedResponse);
                 AddDiagnosticHeaders(response, DiagnosticHeaders.HitFresh, cachedResponse);
                 return response;
             }
@@ -310,8 +311,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             // Response is stale, check stale-while-revalidate
             if (cachedResponse.StaleWhileRevalidate.HasValue)
             {
-                var age = _timeProvider.GetUtcNow() - cachedResponse.CachedAt;
-                var freshnessLifetime = cachedResponse.MaxAge ?? TimeSpan.Zero;
+                var age = CalculateCurrentAge(cachedResponse);
+                var freshnessLifetime = CalculateFreshnessLifetime(cachedResponse) ?? TimeSpan.Zero;
                 var staleness = age - freshnessLifetime;
 
                 // Within stale-while-revalidate window?
@@ -328,6 +329,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         CacheMisses.Add(1, CreateMetricTags(request));
                         return freshResponse;
                     }
+                    ApplyAgeHeader(staleResponse, cachedResponse);
                     AddDiagnosticHeaders(staleResponse, DiagnosticHeaders.HitStaleWhileRevalidate, cachedResponse);
 
                     // Trigger background revalidation
@@ -351,8 +353,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             if ((int)uncachedResponse.StatusCode >= 500 &&
                 cachedResponse is { StaleIfError: not null, MustRevalidate: false })
             {
-                var age = _timeProvider.GetUtcNow() - cachedResponse.CachedAt;
-                var freshnessLifetime = cachedResponse.MaxAge ?? TimeSpan.Zero;
+                var age = CalculateCurrentAge(cachedResponse);
+                var freshnessLifetime = CalculateFreshnessLifetime(cachedResponse) ?? TimeSpan.Zero;
                 var staleness = age - freshnessLifetime;
 
                 // Within stale-if-error window?
@@ -368,6 +370,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
                         return uncachedResponse;
                     }
+                    ApplyAgeHeader(response, cachedResponse);
                     AddDiagnosticHeaders(response, DiagnosticHeaders.HitStaleIfError, cachedResponse);
                     return response;
                 }
@@ -398,6 +401,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
                     return uncachedResponse;
                 }
+                ApplyAgeHeader(response, updatedEntry);
                 AddDiagnosticHeaders(response, DiagnosticHeaders.HitRevalidated, updatedEntry);
                 return response;
             }
@@ -422,8 +426,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             else
             {
                 // Response has no-store or is not cacheable, remove existing cache entry
-                var responseCacheControl = uncachedResponse.Headers.CacheControl;
-                if (responseCacheControl?.NoStore == true)
+                var responseCacheControl = ParseResponseCacheControl(uncachedResponse);
+                if (responseCacheControl.NoStore)
                 {
                     try
                     {
@@ -464,20 +468,25 @@ public class HttpHybridCacheHandler : DelegatingHandler
     private CachedHttpMetadata UpdateCachedEntry(CachedHttpMetadata cached, HttpResponseMessage notModifiedResponse)
     {
         // Update metadata from 304 response while keeping the cached body
-        var updatedMaxAge = notModifiedResponse.Headers.CacheControl?.MaxAge;
-        var updatedExpires = notModifiedResponse.Content.Headers.Expires;
+        var hasCacheControl = notModifiedResponse.Headers.TryGetValues("Cache-Control", out var cacheControlValues);
+        var parsedCacheControl = hasCacheControl
+            ? HttpCacheHeaderParser.ParseCacheControl(cacheControlValues!)
+            : default;
+        var updatedMaxAge = hasCacheControl
+            ? _options.Mode == CacheMode.Shared
+                ? parsedCacheControl.SharedMaxAge ?? parsedCacheControl.MaxAge
+                : parsedCacheControl.MaxAge
+            : null;
+        var hasExpires = notModifiedResponse.Content.Headers.TryGetValues("Expires", out var expiresValues);
+        DateTimeOffset? updatedExpires = hasExpires
+            ? HttpCacheHeaderParser.ParseSingleHttpDate(expiresValues!) ?? DateTimeOffset.MinValue
+            : null;
         var updatedDate = notModifiedResponse.Headers.Date;
 
         // Extract Age from 304 response if present
-        TimeSpan? updatedAge = null;
-        if (notModifiedResponse.Headers.TryGetValues("Age", out var ageValues))
-        {
-            var ageValue = ageValues.FirstOrDefault();
-            if (ageValue != null && int.TryParse(ageValue, out var ageSeconds))
-            {
-                updatedAge = TimeSpan.FromSeconds(ageSeconds);
-            }
-        }
+        var updatedAge = notModifiedResponse.Headers.TryGetValues("Age", out var ageValues)
+            ? HttpCacheHeaderParser.ParseAge(ageValues)
+            : null;
 
         // Return updated metadata, preserving content reference
         return new CachedHttpMetadata
@@ -496,10 +505,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
             Age = updatedAge ?? TimeSpan.Zero,
             VaryHeaders = cached.VaryHeaders,
             VaryHeaderValues = cached.VaryHeaderValues,
-            StaleWhileRevalidate = cached.StaleWhileRevalidate,
-            StaleIfError = cached.StaleIfError,
-            MustRevalidate = cached.MustRevalidate,
-            NoCache = cached.NoCache,
+            StaleWhileRevalidate = hasCacheControl ? parsedCacheControl.StaleWhileRevalidate : cached.StaleWhileRevalidate,
+            StaleIfError = hasCacheControl ? parsedCacheControl.StaleIfError : cached.StaleIfError,
+            MustRevalidate = hasCacheControl ? parsedCacheControl.MustRevalidate : cached.MustRevalidate,
+            NoCache = hasCacheControl ? parsedCacheControl.NoCache : cached.NoCache,
+            Public = hasCacheControl ? parsedCacheControl.Public : cached.Public,
             IsCompressed = cached.IsCompressed
         };
     }
@@ -552,8 +562,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 }
                 else
                 {
-                    var responseCacheControl = revalidatedResponse.Headers.CacheControl;
-                    if (responseCacheControl?.NoStore == true)
+                    var responseCacheControl = ParseResponseCacheControl(revalidatedResponse);
+                    if (responseCacheControl.NoStore)
                     {
                         try
                         {
@@ -717,20 +727,46 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         var currentAge = CalculateCurrentAge(cached);
+        var requestCacheControl = request.Headers.CacheControl;
+
+        // RFC 9111 Section 5.2.1.1: max-age request directive
+        if (requestCacheControl?.MaxAge is TimeSpan requestMaxAge && currentAge > requestMaxAge)
+        {
+            return false;
+        }
+
         var remainingFreshness = freshnessLifetime.Value - currentAge;
 
         // RFC 7234 Section 5.2.1.4: min-fresh
         // The min-fresh request directive indicates that the client is willing to
         // accept a response whose freshness lifetime is no less than its current
         // age plus the specified time (in seconds).
-        var minFresh = request.Headers.CacheControl?.MinFresh;
+        var minFresh = requestCacheControl?.MinFresh;
         if (minFresh.HasValue)
         {
             // Response must have at least min-fresh seconds of remaining freshness
-            return remainingFreshness >= minFresh.Value;
+            if (remainingFreshness < minFresh.Value)
+            {
+                return false;
+            }
         }
 
-        return currentAge < freshnessLifetime;
+        if (currentAge < freshnessLifetime)
+        {
+            return true;
+        }
+
+        // RFC 9111 Section 5.2.1.2: max-stale request directive
+        if (requestCacheControl?.MaxStale == true &&
+            !cached.MustRevalidate &&
+            !cached.NoCache)
+        {
+            var staleness = currentAge - freshnessLifetime.Value;
+            var maxStaleLimit = requestCacheControl.MaxStaleLimit ?? TimeSpan.MaxValue;
+            return staleness <= maxStaleLimit;
+        }
+
+        return false;
     }
 
     private TimeSpan? CalculateFreshnessLifetime(CachedHttpMetadata cached)
@@ -740,7 +776,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         {
             // Shared cache: Prefer s-maxage (from CacheControl.SharedMaxAge) over max-age
             // Note: MaxAge property may contain s-maxage if it was set during response parsing
-            if (cached.MaxAge.HasValue && cached.MaxAge.Value > TimeSpan.Zero)
+            if (cached.MaxAge.HasValue)
             {
                 return cached.MaxAge.Value;
             }
@@ -748,7 +784,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         else // CacheMode.Private
         {
             // Private cache: Use max-age only (ignore s-maxage)
-            if (cached.MaxAge.HasValue && cached.MaxAge.Value > TimeSpan.Zero)
+            if (cached.MaxAge.HasValue)
             {
                 return cached.MaxAge.Value;
             }
@@ -769,7 +805,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
             var timeSinceModified = responseTime - cached.LastModified.Value;
             if (timeSinceModified > TimeSpan.Zero)
             {
-                return TimeSpan.FromSeconds(timeSinceModified.TotalSeconds * _options.HeuristicFreshnessPercent);
+                var heuristicLifetime = TimeSpan.FromSeconds(timeSinceModified.TotalSeconds * _options.HeuristicFreshnessPercent);
+                return heuristicLifetime < _options.HeuristicFreshnessMinimum
+                    ? _options.HeuristicFreshnessMinimum
+                    : heuristicLifetime;
             }
         }
 
@@ -838,23 +877,23 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
     private bool IsResponseCacheable(HttpResponseMessage response, HttpRequestMessage? request = null)
     {
-        var responseCacheControl = response.Headers.CacheControl;
+        var responseCacheControl = ParseResponseCacheControl(response);
 
         // Don't cache if response has no-store
-        if (responseCacheControl?.NoStore == true)
+        if (responseCacheControl.NoStore)
         {
             return false;
         }
 
         // Shared cache mode: MUST NOT cache responses with private directive
-        if (_options.Mode == CacheMode.Shared && responseCacheControl?.Private == true)
+        if (_options.Mode == CacheMode.Shared && responseCacheControl.Private)
         {
             return false;
         }
 
         // Responses with no-cache can be cached but must be revalidated (RFC 9111 §5.2.2.4)
         // They're cacheable if they have validators, even without explicit freshness
-        if (responseCacheControl?.NoCache == true)
+        if (responseCacheControl.NoCache)
         {
             // Can cache if we have validators
             if (response.Headers.ETag != null || response.Content.Headers.LastModified != null)
@@ -903,13 +942,20 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         // Check for Cache-Control header with max-age
-        if (responseCacheControl?.MaxAge > TimeSpan.Zero)
+        if (_options.Mode == CacheMode.Shared)
+        {
+            if (responseCacheControl.SharedMaxAge.HasValue || responseCacheControl.MaxAge.HasValue)
+            {
+                return true;
+            }
+        }
+        else if (responseCacheControl.MaxAge.HasValue)
         {
             return true;
         }
 
         // Check for Expires header
-        if (response.Content.Headers.Expires.HasValue)
+        if (response.Content.Headers.TryGetValues("Expires", out _))
         {
             return true;
         }
@@ -917,7 +963,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         // Check for Last-Modified header (allows heuristic freshness)
         if (response.Content.Headers.LastModified.HasValue)
         {
-            return true;
+            return IsHeuristicallyCacheableStatus(response.StatusCode) || responseCacheControl.Public;
         }
 
         // If default cache duration is configured, response is cacheable
@@ -1052,19 +1098,21 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var contentHeaders = originalContentHeaders;
 
         // Extract cache directives
-        var cacheControl = response.Headers.CacheControl;
+        var parsedCacheControl = response.Headers.TryGetValues("Cache-Control", out var cacheControlValues)
+            ? HttpCacheHeaderParser.ParseCacheControl(cacheControlValues)
+            : default;
 
         // Determine MaxAge based on cache mode
         TimeSpan? maxAge = null;
         if (_options.Mode == CacheMode.Shared)
         {
             // Shared cache: Prefer s-maxage, fallback to max-age
-            maxAge = cacheControl?.SharedMaxAge ?? cacheControl?.MaxAge;
+            maxAge = parsedCacheControl.SharedMaxAge ?? parsedCacheControl.MaxAge;
         }
         else // CacheMode.Private
         {
             // Private cache: Use max-age only (ignore s-maxage)
-            maxAge = cacheControl?.MaxAge;
+            maxAge = parsedCacheControl.MaxAge;
         }
 
         // Extract ETag
@@ -1073,31 +1121,30 @@ public class HttpHybridCacheHandler : DelegatingHandler
         // Extract Last-Modified
         var lastModified = response.Content.Headers.LastModified;
 
+        // Extract Expires using strict HTTP-date parsing
+        DateTimeOffset? expires = null;
+        var hasExpires = response.Content.Headers.TryGetValues("Expires", out var expiresValues);
+        if (hasExpires)
+        {
+            expires = HttpCacheHeaderParser.ParseSingleHttpDate(expiresValues!) ?? DateTimeOffset.MinValue;
+        }
+
         // If no explicit caching headers, use default cache duration
         if (!maxAge.HasValue &&
-            !response.Content.Headers.Expires.HasValue &&
+            !hasExpires &&
             !response.Content.Headers.LastModified.HasValue &&
             _options.FallbackCacheDuration > TimeSpan.MinValue)
         {
             maxAge = _options.FallbackCacheDuration;
         }
 
-        // Extract Expires
-        var expires = response.Content.Headers.Expires;
-
         // Extract Date
         var date = response.Headers.Date;
 
         // Extract Age
-        TimeSpan? age = null;
-        if (response.Headers.TryGetValues("Age", out var ageValues))
-        {
-            var ageValue = ageValues.FirstOrDefault();
-            if (ageValue != null && int.TryParse(ageValue, out var ageSeconds))
-            {
-                age = TimeSpan.FromSeconds(ageSeconds);
-            }
-        }
+        var age = response.Headers.TryGetValues("Age", out var ageValues)
+            ? HttpCacheHeaderParser.ParseAge(ageValues)
+            : null;
 
         // Extract Vary headers and their values from the request
         string[]? varyHeaders = null;
@@ -1133,30 +1180,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         // Extract RFC 5861 stale-while-revalidate and stale-if-error
-        TimeSpan? staleWhileRevalidate = null;
-        TimeSpan? staleIfError = null;
-        var mustRevalidate = response.Headers.CacheControl?.MustRevalidate == true;
-        var noCache = response.Headers.CacheControl?.NoCache == true;
-
-        // Parse Cache-Control extensions manually since HttpClient doesn't expose them
-        if (response.Headers.TryGetValues("Cache-Control", out var cacheControlValues))
-        {
-            var cacheControlString = string.Join(", ", cacheControlValues);
-
-            // Extract stale-while-revalidate
-            var swrMatch = CacheControlRegexes.StaleWhileRevalidate().Match(cacheControlString);
-            if (swrMatch.Success && int.TryParse(swrMatch.Groups[1].Value, out var swrSeconds))
-            {
-                staleWhileRevalidate = TimeSpan.FromSeconds(swrSeconds);
-            }
-
-            // Extract stale-if-error
-            var sieMatch = CacheControlRegexes.StaleIfError().Match(cacheControlString);
-            if (sieMatch.Success && int.TryParse(sieMatch.Groups[1].Value, out var sieSeconds))
-            {
-                staleIfError = TimeSpan.FromSeconds(sieSeconds);
-            }
-        }
+        var staleWhileRevalidate = parsedCacheControl.StaleWhileRevalidate;
+        var staleIfError = parsedCacheControl.StaleIfError;
+        var mustRevalidate = parsedCacheControl.MustRevalidate;
+        var noCache = parsedCacheControl.NoCache;
 
         // Store content separately (always, to avoid Base64 encoding)
         // Store content first (write order: content before metadata for atomicity)
@@ -1191,6 +1218,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             StaleIfError = staleIfError,
             MustRevalidate = mustRevalidate,
             NoCache = noCache,
+            Public = parsedCacheControl.Public,
             IsCompressed = isCompressed
         };
     }
@@ -1254,6 +1282,37 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
         return outputStream.ToArray();
     }
+
+    private static HttpCacheHeaderParser.CacheControlDirectives ParseResponseCacheControl(HttpResponseMessage response)
+        => response.Headers.TryGetValues("Cache-Control", out var values)
+            ? HttpCacheHeaderParser.ParseCacheControl(values)
+            : default;
+
+    private void ApplyAgeHeader(HttpResponseMessage response, CachedHttpMetadata cachedResponse)
+    {
+        var currentAge = CalculateCurrentAge(cachedResponse);
+        var ageSeconds = Math.Max(0L, (long)Math.Floor(currentAge.TotalSeconds));
+        response.Headers.Remove("Age");
+        response.Headers.TryAddWithoutValidation("Age", ageSeconds.ToString());
+    }
+
+    private static bool IsHeuristicallyCacheableStatus(HttpStatusCode statusCode)
+        => statusCode switch
+        {
+            HttpStatusCode.OK => true,
+            HttpStatusCode.NonAuthoritativeInformation => true,
+            HttpStatusCode.NoContent => true,
+            HttpStatusCode.PartialContent => true,
+            HttpStatusCode.MultipleChoices => true,
+            HttpStatusCode.MovedPermanently => true,
+            HttpStatusCode.PermanentRedirect => true,
+            HttpStatusCode.NotFound => true,
+            HttpStatusCode.MethodNotAllowed => true,
+            HttpStatusCode.Gone => true,
+            HttpStatusCode.RequestUriTooLong => true,
+            HttpStatusCode.NotImplemented => true,
+            _ => false
+        };
 
     private void AddDiagnosticHeaders(HttpResponseMessage response, string reason, CachedHttpMetadata? cachedResponse = null)
     {

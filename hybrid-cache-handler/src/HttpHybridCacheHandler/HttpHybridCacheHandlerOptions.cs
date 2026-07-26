@@ -20,6 +20,12 @@ public class HttpHybridCacheHandlerOptions
     public const double DefaultHeuristicFreshnessPercent = 0.1;
 
     /// <summary>
+    /// Default minimum heuristic freshness lifetime for responses with Last-Modified but no explicit freshness info.
+    /// Set to 30 seconds to avoid immediately stale responses due to very recent Last-Modified timestamps.
+    /// </summary>
+    public static readonly TimeSpan DefaultHeuristicFreshnessMinimum = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Default maximum size in bytes for cacheable response content. Set to 10 MB.
     /// </summary>
     public const long DefaultMaxCacheableContentSize = 10 * 1024 * 1024;
@@ -73,6 +79,12 @@ public class HttpHybridCacheHandlerOptions
     /// Default is set to <see cref="DefaultHeuristicFreshnessPercent"/>.
     /// </summary>
     public double HeuristicFreshnessPercent { get; set; } = DefaultHeuristicFreshnessPercent;
+
+    /// <summary>
+    /// Minimum heuristic freshness lifetime for responses with Last-Modified but no explicit freshness info.
+    /// Default is set to <see cref="DefaultHeuristicFreshnessMinimum"/>.
+    /// </summary>
+    public TimeSpan HeuristicFreshnessMinimum { get; set; } = DefaultHeuristicFreshnessMinimum;
 
     /// <summary>
     /// Headers to include in Vary-aware cache keys. Default is set to <see cref="DefaultVaryHeaders"/>.

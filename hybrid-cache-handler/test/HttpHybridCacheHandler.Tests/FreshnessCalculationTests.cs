@@ -250,4 +250,52 @@ public class FreshnessCalculationTests
 
         mockHandler.RequestCount.ShouldBe(1);
     }
+
+    [Fact]
+    public async Task Max_age_zero_takes_precedence_over_future_expires()
+    {
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("response")
+            {
+                Headers =
+                {
+                    Expires = DateTimeOffset.UtcNow.AddHours(1)
+                }
+            },
+            Headers = { { "Cache-Control", "max-age=0" } }
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Heuristic_minimum_freshness_applies_to_recent_last_modified()
+    {
+        var fixedStartTime = DateTimeOffset.Parse("2024-01-01T12:00:00Z");
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("response")
+            {
+                Headers = { LastModified = fixedStartTime.AddSeconds(-5) }
+            },
+            Headers = { Date = fixedStartTime }
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        fixture.SetUtcNow(fixedStartTime);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(3));
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        mockHandler.RequestCount.ShouldBe(1);
+    }
 }

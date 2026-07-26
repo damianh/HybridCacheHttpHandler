@@ -27,5 +27,6 @@ internal sealed class CachedHttpMetadata
     public TimeSpan? StaleIfError { get; init; }
     public bool MustRevalidate { get; init; }
     public bool NoCache { get; init; }
+    public bool Public { get; init; }
     public bool IsCompressed { get; init; }
 }
