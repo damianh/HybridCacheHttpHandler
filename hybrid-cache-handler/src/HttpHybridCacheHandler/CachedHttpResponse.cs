@@ -39,7 +39,6 @@ internal sealed class CachedHttpMetadata
     public bool MustRevalidate { get; init; }
     public bool ProxyRevalidate { get; init; }
     public bool NoCache { get; init; }
-    public bool HasSharedMaxAge { get; init; }
     public string[]? QualifiedNoCacheHeaderNames { get; init; }
     public bool IgnoreStoredAge { get; init; }
     public bool IsCompressed { get; init; }

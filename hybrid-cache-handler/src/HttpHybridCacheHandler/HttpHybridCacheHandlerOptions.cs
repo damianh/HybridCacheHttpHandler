@@ -151,16 +151,10 @@ public class HttpHybridCacheHandlerOptions
     /// </summary>
     public CacheMode Mode { get; set; } = CacheMode.Private;
 
-    private string[] _targetedCacheControlHeaderNames = [.. DefaultTargetedCacheControlHeaderNames];
-
     /// <summary>
     /// Response header names containing targeted cache directives (RFC 9213).
     /// These directives are applied only when <see cref="Mode"/> is <see cref="CacheMode.Shared"/>.
     /// Default is <see cref="DefaultTargetedCacheControlHeaderNames"/>.
     /// </summary>
-    public string[] TargetedCacheControlHeaderNames
-    {
-        get => _targetedCacheControlHeaderNames;
-        set => _targetedCacheControlHeaderNames = value is null ? [] : [.. value];
-    }
+    public string[] TargetedCacheControlHeaderNames { get; set; } = DefaultTargetedCacheControlHeaderNames;
 }
