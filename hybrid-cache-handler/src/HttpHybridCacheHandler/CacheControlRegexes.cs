@@ -15,4 +15,19 @@ internal static partial class CacheControlRegexes
 
     [GeneratedRegex(@"stale-if-error=(\d+)", RegexOptions.IgnoreCase)]
     internal static partial Regex StaleIfError();
+
+    [GeneratedRegex(@"(?:^|,)\s*no-cache\s*=\s*""([^""]*)""", RegexOptions.IgnoreCase)]
+    internal static partial Regex QualifiedNoCache();
+
+    [GeneratedRegex(@"(?:^|,)\s*no-cache\s*(?:,|$)", RegexOptions.IgnoreCase)]
+    internal static partial Regex UnqualifiedNoCache();
+
+    [GeneratedRegex(@"(?:^|,)\s*must-understand\s*(?:,|$)", RegexOptions.IgnoreCase)]
+    internal static partial Regex MustUnderstand();
+
+    [GeneratedRegex(@"(?:^|,)\s*max-age\s*=\s*(\d+)", RegexOptions.IgnoreCase)]
+    internal static partial Regex MaxAge();
+
+    [GeneratedRegex(@"(?:^|,)\s*s-maxage\s*=\s*(\d+)", RegexOptions.IgnoreCase)]
+    internal static partial Regex SharedMaxAge();
 }

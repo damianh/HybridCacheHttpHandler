@@ -37,7 +37,13 @@ internal sealed class CachedHttpMetadata
     public TimeSpan? StaleWhileRevalidate { get; init; }
     public TimeSpan? StaleIfError { get; init; }
     public bool MustRevalidate { get; init; }
+    public bool ProxyRevalidate { get; init; }
     public bool NoCache { get; init; }
-    public bool Public { get; init; }
+    public string[]? QualifiedNoCacheHeaderNames { get; init; }
+    public bool IgnoreStoredAge { get; init; }
     public bool IsCompressed { get; init; }
+    public bool IsPartial { get; init; }
+    public long? RangeStart { get; init; }
+    public long? RangeEnd { get; init; }
+    public long? RangeTotalLength { get; init; }
 }

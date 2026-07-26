@@ -63,6 +63,14 @@ public class HttpHybridCacheHandlerOptions
     ];
 
     /// <summary>
+    /// Default targeted cache-control headers used by shared caches (RFC 9213).
+    /// </summary>
+    public static readonly string[] DefaultTargetedCacheControlHeaderNames =
+    [
+        "CDN-Cache-Control"
+    ];
+
+    /// <summary>
     /// Default headers to include in Vary-aware cache keys. Values are
     /// none (response Vary matching is always enforced independently).
     /// </summary>
@@ -141,5 +149,12 @@ public class HttpHybridCacheHandlerOptions
     /// Default is Private (browser-like cache, suitable for scaled-out clients).
     /// Use Shared for proxy/CDN scenarios (e.g., YARP).
     /// </summary>
-    public CacheMode Mode { get; init; } = CacheMode.Private;
+    public CacheMode Mode { get; set; } = CacheMode.Private;
+
+    /// <summary>
+    /// Response header names containing targeted cache directives (RFC 9213).
+    /// These directives are applied only when <see cref="Mode"/> is <see cref="CacheMode.Shared"/>.
+    /// Default is <see cref="DefaultTargetedCacheControlHeaderNames"/>.
+    /// </summary>
+    public string[] TargetedCacheControlHeaderNames { get; set; } = DefaultTargetedCacheControlHeaderNames;
 }
