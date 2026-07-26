@@ -129,8 +129,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 var onlyIfCachedEntry = await GetCacheEntryAsync(cacheKey, ct);
                 if (onlyIfCachedEntry != null)
                 {
-                    var cachedVariant = VaryMatcher.SelectVariant(onlyIfCachedEntry, request);
-                    if (cachedVariant != null && IsUsableForOnlyIfCached(cachedVariant, request))
+                    var cachedVariant = VaryMatcher.SelectVariant(
+                        onlyIfCachedEntry,
+                        request,
+                        candidate => IsUsableForOnlyIfCached(candidate, request));
+                    if (cachedVariant != null)
                     {
                         if (TryCreateConditionalNotModifiedResponse(request, cachedVariant, out var notModifiedResponse))
                         {
@@ -284,7 +287,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 return uncachedResponse;
             }
 
-            var cachedResponse = VaryMatcher.SelectVariant(cachedEntry, request);
+            var cachedResponse = VaryMatcher.SelectVariant(cachedEntry, request, candidate => IsFresh(candidate, request))
+                ?? VaryMatcher.SelectVariant(cachedEntry, request);
             if (cachedResponse == null)
             {
                 var variantMissResponse = await base.SendAsync(request, ct);
@@ -455,7 +459,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, cachedResponse);
 
                         // Trigger background revalidation
-                        _ = Task.Run(() => BackgroundRevalidateAsync(cachedResponse, request, cacheKey2), ct);
+                        _ = Task.Run(() => BackgroundRevalidateAsync(cachedEntry, cachedResponse, request, cacheKey2));
 
                         CacheHits.Add(1, CreateMetricTags(request)); // Count as hit (stale-while-revalidate)
                         CacheStale.Add(1, CreateMetricTags(request));
@@ -548,9 +552,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 }
 
                 CacheHits.Add(1, CreateMetricTags(request)); // Count as hit (revalidated)
-                if (TryCreateConditionalNotModifiedResponse(request, updatedEntry, out var notModifiedResponse))
+                if (TryCreateConditionalNotModifiedResponse(request, updatedVariant, out var notModifiedResponse))
                 {
-                    AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, updatedEntry);
+                    AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, updatedVariant);
                     return notModifiedResponse;
                 }
 
@@ -1452,10 +1456,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         variants[index] = updatedVariant;
-        return new CachedHttpEntry
-        {
-            Variants = variants
-        };
+        return BuildEntryWithLimit(variants);
     }
 
     private CachedHttpEntry RemoveVariant(CachedHttpEntry entry, CachedHttpMetadata variantToRemove)
@@ -1465,10 +1466,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             .Where(v => !string.Equals(VaryMatcher.BuildVariantSignature(v), signature, StringComparison.Ordinal))
             .ToList();
 
-        return new CachedHttpEntry
-        {
-            Variants = variants
-        };
+        return BuildEntryWithLimit(variants);
     }
 
     private async Task RemoveVariantFromEntryAsync(

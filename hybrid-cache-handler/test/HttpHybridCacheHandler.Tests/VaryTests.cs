@@ -705,6 +705,50 @@ public class VaryTests
     }
 
     [Fact]
+    public async Task Accept_Language_prefers_fresh_variant_when_higher_quality_match_is_stale()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            var acceptLanguage = request.Headers.TryGetValues("Accept-Language", out var values)
+                ? string.Join(string.Empty, values)
+                : string.Empty;
+
+            var isEnglishVariant = acceptLanguage == "en-US";
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(isEnglishVariant ? "response_en" : "response_fr")
+            };
+            response.Headers.Add("Cache-Control", isEnglishVariant ? "max-age=1" : "max-age=3600");
+            response.Headers.Add("Vary", "Accept-Language");
+            response.Content.Headers.ContentLanguage.Add(isEnglishVariant ? "en" : "fr");
+            return Task.FromResult(response);
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Accept-Language", "en-US");
+        await client.SendAsync(request1, _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Accept-Language", "fr-FR");
+        await client.SendAsync(request2, _ct);
+
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var request3 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request3.Headers.Add("Accept-Language", "en, fr;q=0.9");
+        var response3 = await client.SendAsync(request3, _ct);
+
+        response3.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await response3.Content.ReadAsStringAsync(_ct)).ShouldBe("response_fr");
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Variant_miss_write_merges_against_latest_cached_entry()
     {
         var initialVariant = CreateStoredFooVariant("1", DateTimeOffset.UnixEpoch);

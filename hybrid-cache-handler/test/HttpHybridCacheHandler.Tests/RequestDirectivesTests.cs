@@ -348,6 +348,48 @@ public class RequestDirectivesTests
     }
 
     [Fact]
+    public async Task Only_if_cached_falls_back_to_usable_Accept_Language_variant()
+    {
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            var acceptLanguage = request.Headers.TryGetValues("Accept-Language", out var values)
+                ? string.Join(string.Empty, values)
+                : string.Empty;
+
+            var isEnglishVariant = acceptLanguage == "en-US";
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(isEnglishVariant ? "response_en" : "response_fr")
+            };
+            response.Headers.Add("Cache-Control", isEnglishVariant ? "max-age=1" : "max-age=3600");
+            response.Headers.Add("Vary", "Accept-Language");
+            response.Content.Headers.Add("Content-Language", isEnglishVariant ? "en" : "fr");
+            return Task.FromResult(response);
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        var englishRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        englishRequest.Headers.Add("Accept-Language", "en-US");
+        await client.SendAsync(englishRequest, _ct);
+
+        var frenchRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        frenchRequest.Headers.Add("Accept-Language", "fr-FR");
+        await client.SendAsync(frenchRequest, _ct);
+
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var onlyIfCachedRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        onlyIfCachedRequest.Headers.Add("Accept-Language", "en, fr;q=0.9");
+        onlyIfCachedRequest.Headers.Add("Cache-Control", "only-if-cached");
+        var onlyIfCachedResponse = await client.SendAsync(onlyIfCachedRequest, _ct);
+
+        onlyIfCachedResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await onlyIfCachedResponse.Content.ReadAsStringAsync(_ct)).ShouldBe("response_fr");
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Only_if_cached_returns_504_if_not_in_cache()
     {
         var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage

@@ -7,7 +7,10 @@ namespace DamianH.HttpHybridCacheHandler;
 
 internal static class VaryMatcher
 {
-    public static CachedHttpMetadata? SelectVariant(CachedHttpEntry entry, HttpRequestMessage request)
+    public static CachedHttpMetadata? SelectVariant(
+        CachedHttpEntry entry,
+        HttpRequestMessage request,
+        Func<CachedHttpMetadata, bool>? variantFilter = null)
     {
         CachedHttpMetadata? bestMatch = null;
         VariantMatchScore bestMatchScore = default;
@@ -15,6 +18,11 @@ internal static class VaryMatcher
         foreach (var variant in entry.Variants)
         {
             if (!TryGetVariantMatchScore(variant, request, out var candidateScore))
+            {
+                continue;
+            }
+
+            if (variantFilter != null && !variantFilter(variant))
             {
                 continue;
             }
