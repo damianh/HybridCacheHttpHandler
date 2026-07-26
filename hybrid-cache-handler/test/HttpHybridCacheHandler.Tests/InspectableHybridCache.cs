@@ -33,14 +33,9 @@ internal sealed class InspectableHybridCache : HybridCache
         IEnumerable<string>? tags = null,
         Ct cancellationToken = default)
     {
-        if (_store.TryGetValue(key, out var stored))
+        if (_store.TryGetValue(key, out var stored) && stored is T value)
         {
-            if (stored is T value)
-            {
-                return value;
-            }
-
-            return default!;
+            return value;
         }
 
         var created = await factory(state, cancellationToken);
