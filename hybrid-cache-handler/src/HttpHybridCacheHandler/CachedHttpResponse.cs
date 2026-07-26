@@ -47,4 +47,5 @@ internal sealed class CachedHttpMetadata
     public long? RangeStart { get; init; }
     public long? RangeEnd { get; init; }
     public long? RangeTotalLength { get; init; }
+    public bool IsStoredExternally { get; init; }
 }

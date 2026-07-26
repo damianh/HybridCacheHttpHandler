@@ -2,6 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using DamianH.HttpHybridCacheHandler;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -62,7 +63,11 @@ public static class ServiceCollectionExtensions
             // silently never reach L2 without this alignment.
             var previewOptions = new HttpHybridCacheHandlerOptions();
             configure(previewOptions);
-
+            serviceCollection.TryAddSingleton<IHttpCacheContentStore>(sp =>
+            {
+                var cache = sp.GetRequiredKeyedService<HybridCache>(HybridCacheKey);
+                return new ContentCache(cache);
+            });
             serviceCollection.AddKeyedHybridCache(HybridCacheKey, options =>
             {
                 // Use a large default expiration so that HybridCache entries are not evicted
@@ -84,7 +89,7 @@ public static class ServiceCollectionExtensions
                 .Configure(options => ApplyPreviewOptions(options, previewOptions));
             return serviceCollection;
         }
-
+ 
         private static void ApplyPreviewOptions(HttpHybridCacheHandlerOptions options, HttpHybridCacheHandlerOptions previewOptions)
         {
             options.HeuristicFreshnessPercent = previewOptions.HeuristicFreshnessPercent;
@@ -93,11 +98,23 @@ public static class ServiceCollectionExtensions
             options.MaxCacheableContentSize = Math.Min(previewOptions.MaxCacheableContentSize, int.MaxValue);
             options.FallbackCacheDuration = previewOptions.FallbackCacheDuration;
             options.CompressionThreshold = previewOptions.CompressionThreshold;
+            options.LargeContentThreshold = previewOptions.LargeContentThreshold;
             options.CompressibleContentTypes = previewOptions.CompressibleContentTypes;
             options.CacheableContentTypes = previewOptions.CacheableContentTypes;
             options.IncludeDiagnosticHeaders = previewOptions.IncludeDiagnosticHeaders;
             options.Mode = previewOptions.Mode;
             options.TargetedCacheControlHeaderNames = previewOptions.TargetedCacheControlHeaderNames;
+
+        /// <summary>
+        /// Registers the optional content store used for large cached responses.
+        /// </summary>
+        public IServiceCollection AddHttpHybridCacheLargeContentStore<
+            [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TStore>()
+            where TStore : class, ILargeHttpCacheContentStore
+        {
+            serviceCollection.TryAddSingleton<TStore>();
+            serviceCollection.TryAddSingleton<ILargeHttpCacheContentStore>(sp => sp.GetRequiredService<TStore>());
+            return serviceCollection;
         }
     }
 }

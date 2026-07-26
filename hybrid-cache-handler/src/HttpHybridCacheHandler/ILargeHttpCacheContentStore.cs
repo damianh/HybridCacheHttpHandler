@@ -1,0 +1,9 @@
+// Copyright (c) Damian Hickey. All rights reserved.
+// See LICENSE in the project root for license information.
+
+namespace DamianH.HttpHybridCacheHandler;
+
+/// <summary>
+/// Marker interface for an optional content store used for large responses.
+/// </summary>
+public interface ILargeHttpCacheContentStore : IHttpCacheContentStore;

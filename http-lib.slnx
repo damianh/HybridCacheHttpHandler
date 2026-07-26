@@ -23,6 +23,7 @@
   </Folder>
   <Folder Name="/hybrid-cache-handler/src/">
     <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler/HttpHybridCacheHandler.csproj" />
+    <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.ContentStore.Stowage/HttpHybridCacheHandler.ContentStore.Stowage.csproj" />
   </Folder>
   <Folder Name="/hybrid-cache-handler/test/">
     <Project Path="hybrid-cache-handler/test/HttpHybridCacheHandler.Tests/HttpHybridCacheHandler.Tests.csproj" />

@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Hybrid;
@@ -40,7 +41,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
     private const int MaxVariantsPerEntry = 8;
 
     private readonly HybridCache _cache;
-    private readonly ContentCache _contentCache;
+    private readonly IHttpCacheContentStore _contentStore;
+    private readonly ILargeHttpCacheContentStore? _largeContentStore;
     private readonly TimeProvider _timeProvider;
     private readonly HttpHybridCacheHandlerOptions _options;
     private readonly ILogger _logger;
@@ -83,18 +85,75 @@ public class HttpHybridCacheHandler : DelegatingHandler
     /// </summary>
     /// <param name="cache">The hybrid cache instance to use for caching.</param>
     /// <param name="timeProvider">The time provider for time-based operations. Uses system time if not specified.</param>
+    /// <param name="contentStore">The default cache content store (HybridCache-backed by default).</param>
+    /// <param name="serviceProvider">Service provider used to resolve optional large-content store.</param>
     /// <param name="options">Configuration options for the handler. Uses default options if not specified.</param>
     /// <param name="logger">The logger instance. Uses NullLogger if not specified.</param>
     public HttpHybridCacheHandler(
         [FromKeyedServices(ServiceCollectionExtensions.HybridCacheKey)] HybridCache cache,
+        TimeProvider timeProvider,
+        IHttpCacheContentStore contentStore,
+        IServiceProvider serviceProvider,
+        IOptions<HttpHybridCacheHandlerOptions> options,
+        ILogger<HttpHybridCacheHandler> logger)
+    {
+        _cache = cache;
+        _options = options.Value;
+        _contentStore = contentStore;
+        _largeContentStore = serviceProvider.GetService<ILargeHttpCacheContentStore>();
+        _timeProvider = timeProvider;
+        _logger = logger;
+        _freshnessCalculator = new FreshnessCalculator(_timeProvider, _options);
+        _cacheKeyGenerator = new CacheKeyGenerator(_options);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="HttpHybridCacheHandler"/> class.
+    /// </summary>
+    /// <param name="cache">The hybrid cache instance to use for caching.</param>
+    /// <param name="timeProvider">The time provider for time-based operations. Uses system time if not specified.</param>
+    /// <param name="options">Configuration options for the handler. Uses default options if not specified.</param>
+    /// <param name="logger">The logger instance. Uses NullLogger if not specified.</param>
+    public HttpHybridCacheHandler(
+        HybridCache cache,
         TimeProvider timeProvider,
         IOptions<HttpHybridCacheHandlerOptions> options,
         ILogger<HttpHybridCacheHandler> logger)
     {
         _cache = cache;
         _options = options.Value;
-        _contentCache = new ContentCache(cache);
+        _contentStore = new ContentCache(cache);
         _timeProvider = timeProvider;
+        _logger = logger;
+        _freshnessCalculator = new FreshnessCalculator(_timeProvider, _options);
+        _cacheKeyGenerator = new CacheKeyGenerator(_options);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="HttpHybridCacheHandler"/> class with a specific inner handler.
+    /// </summary>
+    /// <param name="innerHandler">The inner handler which is responsible for processing the HTTP response messages.</param>
+    /// <param name="cache">The hybrid cache instance to use for caching.</param>
+    /// <param name="timeProvider">The time provider for time-based operations. Uses system time if not specified.</param>
+    /// <param name="contentStore">The default cache content store, or null to use the HybridCache-backed store.</param>
+    /// <param name="options">Configuration options for the handler. Uses default options if not specified.</param>
+    /// <param name="logger">The logger instance. Uses NullLogger if not specified.</param>
+    /// <param name="largeContentStore">Optional large-response content store.</param>
+    public HttpHybridCacheHandler(
+        HttpMessageHandler innerHandler,
+        HybridCache cache,
+        TimeProvider timeProvider,
+        IHttpCacheContentStore? contentStore,
+        HttpHybridCacheHandlerOptions options,
+        ILogger<HttpHybridCacheHandler> logger,
+        ILargeHttpCacheContentStore? largeContentStore = null)
+        : base(innerHandler)
+    {
+        _cache = cache;
+        _contentStore = contentStore ?? new ContentCache(cache);
+        _largeContentStore = largeContentStore;
+        _timeProvider = timeProvider;
+        _options = options;
         _logger = logger;
         _freshnessCalculator = new FreshnessCalculator(_timeProvider, _options);
         _cacheKeyGenerator = new CacheKeyGenerator(_options);
@@ -114,15 +173,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
         TimeProvider timeProvider,
         HttpHybridCacheHandlerOptions options,
         ILogger<HttpHybridCacheHandler> logger)
-        : base(innerHandler)
+        : this(innerHandler, cache, timeProvider, null, options, logger)
     {
-        _cache = cache;
-        _contentCache = new ContentCache(cache);
-        _timeProvider = timeProvider;
-        _options = options;
-        _logger = logger;
-        _freshnessCalculator = new FreshnessCalculator(_timeProvider, _options);
-        _cacheKeyGenerator = new CacheKeyGenerator(_options);
     }
 
     /// <inheritdoc/>
@@ -892,7 +944,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             IsPartial = cached.IsPartial,
             RangeStart = cached.RangeStart,
             RangeEnd = cached.RangeEnd,
-            RangeTotalLength = cached.RangeTotalLength
+            RangeTotalLength = cached.RangeTotalLength,
+            IsStoredExternally = cached.IsStoredExternally
         };
     }
 
@@ -2723,7 +2776,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
         // Store content first (write order: content before metadata for atomicity)
         var requestUriTag = GetUriTag(request?.RequestUri);
         IEnumerable<string>? contentTags = requestUriTag == null ? null : [requestUriTag];
-        var contentKey = await _contentCache.StoreContentAsync(contentToCache, null, contentTags, Ct.None);
+        var contentKey = CreateContentKey(contentToCache);
+        var contentStore = ResolveContentStore(contentToCache.Length);
+        await contentStore.WriteAsync(contentKey, new ReadOnlySequence<byte>(contentToCache), contentTags, Ct.None);
 
         // Restore response content so caller can use it (content was consumed during read)
         response.Content = new ByteArrayContent(originalContent);
@@ -2762,32 +2817,34 @@ public class HttpHybridCacheHandler : DelegatingHandler
             IsPartial = partialMetadata?.IsPartial ?? false,
             RangeStart = partialMetadata?.Start,
             RangeEnd = partialMetadata?.End,
-            RangeTotalLength = partialMetadata?.TotalLength
+            RangeTotalLength = partialMetadata?.TotalLength,
+            IsStoredExternally = ReferenceEquals(contentStore, _largeContentStore)
         };
     }
 
     private async Task<HttpResponseMessage?> DeserializeResponseAsync(CachedHttpMetadata metadata, Ct cancellationToken)
     {
+        var contentStore = metadata.IsStoredExternally && _largeContentStore != null
+            ? _largeContentStore
+            : _contentStore;
+
         // Get content from separate storage
-        var retrievedContent = await _contentCache.GetContentAsync(metadata.ContentKey, cancellationToken);
-        if (retrievedContent == null)
+        var contentStream = await contentStore.OpenReadAsync(metadata.ContentKey, cancellationToken);
+        if (contentStream == null)
         {
             // Content missing - metadata is orphaned
             _logger.CachedContentMissing(metadata.ContentKey);
             return null;
         }
 
-        var content = retrievedContent;
-
-        // Decompress if needed
         if (metadata.IsCompressed)
         {
-            content = DecompressContent(content);
+            contentStream = new GZipStream(contentStream, CompressionMode.Decompress);
         }
 
         var response = new HttpResponseMessage((HttpStatusCode)metadata.StatusCode)
         {
-            Content = new ReadOnlyMemoryContent(content)
+            Content = new StreamContent(contentStream)
         };
 
         var forbiddenHeaderNames = BuildReplayForbiddenHeaderSet(metadata.QualifiedNoCacheHeaderNames);
@@ -2818,6 +2875,16 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         return response;
     }
+
+    private IHttpCacheContentStore ResolveContentStore(long contentLength) =>
+        _largeContentStore != null
+        && _options.LargeContentThreshold > 0
+        && contentLength >= _options.LargeContentThreshold
+            ? _largeContentStore
+            : _contentStore;
+
+    private string CreateContentKey(byte[] content) =>
+        $"{_options.ContentKeyPrefix}{Convert.ToHexString(SHA256.HashData(content))}";
 
     private bool IsCompressible(string? mediaType)
     {

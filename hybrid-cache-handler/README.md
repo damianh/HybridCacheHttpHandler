@@ -57,6 +57,7 @@ RFC 9111 compliant client-side HTTP caching for `HttpClient`, powered by .NET's 
   - `stale-while-revalidate`: Serve stale content while updating in background
   - `stale-if-error`: Serve stale content when origin is unavailable
 - **Configurable Limits**: Per-item content size limits (default 10MB)
+- **Optional Large Content Store**: Route large cached response bodies to an external store (for example Stowage-backed object storage)
 - **Metrics**: Built-in metrics via `System.Diagnostics.Metrics` for hit/miss rates and cache operations
 - **Custom Cache Keys**: Extensible cache key generation for advanced scenarios
 - **Request Collapsing**: Prevents cache stampede via `HybridCache.GetOrCreateAsync` automatic request coalescing
@@ -290,10 +291,27 @@ new HttpHybridCacheHandlerOptions
 - **MaxCacheableContentSize**: Maximum size in bytes for cacheable response content (default: 10 MB). Responses larger than this will not be cached
 - **FallbackCacheDuration**: Fallback cache duration for responses without explicit caching headers (default: `TimeSpan.MinValue`, meaning responses without caching headers are not cached)
 - **CompressionThreshold**: Minimum content size in bytes to enable compression (default: 1024 bytes). Set to 0 or negative value to disable compression
+- **LargeContentThreshold**: Size threshold in bytes for routing cached content to an optional `ILargeHttpCacheContentStore` (default: 1 MiB). Set to 0 or negative value to always use HybridCache content storage
 - **CompressibleContentTypes**: Content types eligible for compression (default: `text/*`, `application/json`, `application/json+*`, `application/xml`, `application/javascript`, `image/svg+xml`)
 - **CacheableContentTypes**: Content types eligible for caching (default: `text/*`, `application/json`, `application/json+*`, `application/xml`, `application/javascript`, `application/xhtml+xml`, `image/*`)
 - **ContentKeyPrefix**: Prefix for content cache keys (default: `"httpcache:content:"`). Content is stored separately from metadata to avoid Base64 encoding overhead
 - **IncludeDiagnosticHeaders**: Whether to include diagnostic headers (`X-Cache-Diagnostic`, etc.) in responses (default: `false`)
+
+### Optional Stowage Large Content Store
+
+To route larger cached response bodies to a Stowage-backed object store while keeping metadata in HybridCache:
+
+```csharp
+using DamianH.HttpHybridCacheHandler.ContentStore.Stowage;
+using Stowage;
+
+services.AddSingleton<IFileStorage>(_ => /* your Stowage IFileStorage */);
+services.AddHttpHybridCacheHandler(options =>
+{
+    options.LargeContentThreshold = 1024 * 1024; // 1 MiB
+});
+services.AddHttpHybridCacheStowageLargeContentStore();
+```
 
 ## Metrics
 

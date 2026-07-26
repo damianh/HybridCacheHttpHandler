@@ -31,6 +31,12 @@ public class HttpHybridCacheHandlerOptions
     public const long DefaultMaxCacheableContentSize = 10 * 1024 * 1024;
 
     /// <summary>
+    /// Default response size threshold for routing content to an external large-content store.
+    /// Set to 1 MiB.
+    /// </summary>
+    public const long DefaultLargeContentThreshold = 1024 * 1024;
+
+    /// <summary>
     /// Default list of cacheable content types. Values are
     /// text/*, application/json, application/json+*, application/xml,
     /// application/javascript, application/xhtml+xml, image/*.
@@ -117,6 +123,13 @@ public class HttpHybridCacheHandlerOptions
     /// Set to 0 or negative value to disable compression.
     /// </summary>
     public long CompressionThreshold { get; set; } = DefaultCompressionThreshold;
+
+    /// <summary>
+    /// Response size threshold in bytes for routing cache content to an optional
+    /// <see cref="ILargeHttpCacheContentStore"/> implementation.
+    /// Set to 0 or a negative value to always use HybridCache content storage.
+    /// </summary>
+    public long LargeContentThreshold { get; set; } = DefaultLargeContentThreshold;
 
     /// <summary>
     /// Gets or sets the list of MIME types that are eligible for compression.
