@@ -152,6 +152,31 @@ public class OptionalConformanceTests
     }
 
     [Fact]
+    public async Task Shared_cache_with_targeted_cache_control_still_honors_qualified_no_cache_from_cache_control()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("cached")
+        };
+        response.Headers.TryAddWithoutValidation("Cache-Control", "max-age=3600, no-cache=\"Set-Cookie\"");
+        response.Headers.TryAddWithoutValidation("CDN-Cache-Control", "max-age=3600");
+        response.Headers.TryAddWithoutValidation("Set-Cookie", "session=abc");
+
+        var mockHandler = new MockHttpMessageHandler(response);
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            options => options.Mode = CacheMode.Shared);
+        using var client = fixture.CreateClient();
+
+        var originResponse = await client.GetAsync("https://example.com/cdn-qualified-no-cache", _ct);
+        var cachedResponse = await client.GetAsync("https://example.com/cdn-qualified-no-cache", _ct);
+
+        mockHandler.RequestCount.ShouldBe(1);
+        originResponse.Headers.Contains("Set-Cookie").ShouldBeTrue();
+        cachedResponse.Headers.Contains("Set-Cookie").ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task Shared_cache_handles_null_targeted_cache_control_header_names()
     {
         var response = new HttpResponseMessage(HttpStatusCode.OK)
@@ -339,6 +364,46 @@ public class OptionalConformanceTests
     }
 
     [Fact]
+    public async Task Head_response_uses_cached_get_content_length_when_missing_from_headers()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(req =>
+        {
+            requestCount++;
+            if (req.Method == HttpMethod.Head)
+            {
+                var head = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent([])
+                };
+                head.Content.Headers.ContentLength = null;
+                head.Headers.TryAddWithoutValidation("Cache-Control", "max-age=120");
+                head.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+                return Task.FromResult(head);
+            }
+
+            var get = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("v1")
+            };
+            get.Content.Headers.ContentLength = null;
+            get.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1");
+            get.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+            return Task.FromResult(get);
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/head-content-length", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        var headResponse = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, "https://example.com/head-content-length"), _ct);
+
+        requestCount.ShouldBe(2);
+        headResponse.Content.Headers.ContentLength.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Head_error_can_invalidate_cached_get()
     {
         var getResponses = 0;
@@ -501,6 +566,52 @@ public class OptionalConformanceTests
 
         mockHandler.RequestCount.ShouldBe(1);
         response2.StatusCode.ShouldBe(HttpStatusCode.PartialContent);
+    }
+
+    [Fact]
+    public async Task Full_get_bypasses_cached_partial_response()
+    {
+        var requestRanges = new List<string?>();
+        var originCalls = 0;
+        var mockHandler = new MockHttpMessageHandler(req =>
+        {
+            originCalls++;
+            var range = req.Headers.Range?.Ranges.SingleOrDefault();
+            requestRanges.Add(range == null
+                ? null
+                : $"bytes={range.From}-{(range.To.HasValue ? range.To.Value.ToString() : string.Empty)}");
+
+            if (originCalls == 1)
+            {
+                return Task.FromResult(CreatePartialResponse("ab", 0, 1, 6));
+            }
+
+            if (range?.From == 2 && !range.To.HasValue)
+            {
+                return Task.FromResult(CreatePartialResponse("cdef", 2, 5, 6));
+            }
+
+            var full = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("abcdef")
+            };
+            full.Headers.TryAddWithoutValidation("Cache-Control", "max-age=3600");
+            return Task.FromResult(full);
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/full-after-partial", _ct);
+        var fullResponse = await client.GetAsync("https://example.com/full-after-partial", _ct);
+        var body = await fullResponse.Content.ReadAsStringAsync(_ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
+        requestRanges.Count.ShouldBe(2);
+        requestRanges[0].ShouldBeNull();
+        requestRanges[1].ShouldBeNull();
+        fullResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        body.ShouldBe("abcdef");
     }
 
     [Fact]
