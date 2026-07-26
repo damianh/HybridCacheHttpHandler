@@ -9,15 +9,24 @@ internal static class VaryMatcher
 {
     public static CachedHttpMetadata? SelectVariant(CachedHttpEntry entry, HttpRequestMessage request)
     {
+        CachedHttpMetadata? bestMatch = null;
+        VariantMatchScore bestMatchScore = default;
+
         foreach (var variant in entry.Variants)
         {
-            if (Matches(variant, request))
+            if (!TryGetVariantMatchScore(variant, request, out var candidateScore))
             {
-                return variant;
+                continue;
+            }
+
+            if (bestMatch == null || CompareMatchScore(candidateScore, bestMatchScore) > 0)
+            {
+                bestMatch = variant;
+                bestMatchScore = candidateScore;
             }
         }
 
-        return null;
+        return bestMatch;
     }
 
     public static string BuildVariantSignature(CachedHttpMetadata variant) =>
@@ -58,10 +67,15 @@ internal static class VaryMatcher
         return string.Join(",", normalizedTokens);
     }
 
-    private static bool Matches(CachedHttpMetadata variant, HttpRequestMessage request)
+    private static bool TryGetVariantMatchScore(
+        CachedHttpMetadata variant,
+        HttpRequestMessage request,
+        out VariantMatchScore score)
     {
+        score = default;
         if (variant.VaryHeaders == null || variant.VaryHeaders.Length == 0)
         {
+            score = new VariantMatchScore(0, 0, 0d, variant.CachedAt);
             return true;
         }
 
@@ -69,6 +83,10 @@ internal static class VaryMatcher
         {
             return false;
         }
+
+        var exactHeaderCount = 0;
+        var acceptLanguageMatchRank = 0;
+        var acceptLanguageWeight = 0d;
 
         foreach (var varyHeader in variant.VaryHeaders)
         {
@@ -79,9 +97,21 @@ internal static class VaryMatcher
             var requestValue = GetNormalizedRequestHeaderValue(request, varyHeader);
             if (varyHeader.Equals("Accept-Language", StringComparison.OrdinalIgnoreCase))
             {
-                if (!AcceptLanguageMatches(storedValue, requestValue, variant))
+                var acceptLanguageMatch = EvaluateAcceptLanguageMatch(storedValue, requestValue, variant);
+                if (!acceptLanguageMatch.IsMatch)
                 {
                     return false;
+                }
+
+                if (acceptLanguageMatch.MatchRank > acceptLanguageMatchRank)
+                {
+                    acceptLanguageMatchRank = acceptLanguageMatch.MatchRank;
+                    acceptLanguageWeight = acceptLanguageMatch.Weight;
+                }
+                else if (acceptLanguageMatch.MatchRank == acceptLanguageMatchRank
+                    && acceptLanguageMatch.Weight > acceptLanguageWeight)
+                {
+                    acceptLanguageWeight = acceptLanguageMatch.Weight;
                 }
 
                 continue;
@@ -91,9 +121,35 @@ internal static class VaryMatcher
             {
                 return false;
             }
+
+            exactHeaderCount++;
         }
 
+        score = new VariantMatchScore(exactHeaderCount, acceptLanguageMatchRank, acceptLanguageWeight, variant.CachedAt);
         return true;
+    }
+
+    private static int CompareMatchScore(VariantMatchScore left, VariantMatchScore right)
+    {
+        var comparison = left.ExactHeaderCount.CompareTo(right.ExactHeaderCount);
+        if (comparison != 0)
+        {
+            return comparison;
+        }
+
+        comparison = left.AcceptLanguageMatchRank.CompareTo(right.AcceptLanguageMatchRank);
+        if (comparison != 0)
+        {
+            return comparison;
+        }
+
+        comparison = left.AcceptLanguageWeight.CompareTo(right.AcceptLanguageWeight);
+        if (comparison != 0)
+        {
+            return comparison;
+        }
+
+        return left.CachedAt.CompareTo(right.CachedAt);
     }
 
     private static string GetNormalizedRequestHeaderValue(HttpRequestMessage request, string headerName) =>
@@ -101,38 +157,50 @@ internal static class VaryMatcher
             ? NormalizeHeaderValue(values)
             : string.Empty;
 
-    private static bool AcceptLanguageMatches(
+    private static AcceptLanguageMatch EvaluateAcceptLanguageMatch(
         string storedRequestValue,
         string presentedRequestValue,
         CachedHttpMetadata variant)
     {
         if (string.Equals(storedRequestValue, presentedRequestValue, StringComparison.Ordinal))
         {
-            return true;
+            return new AcceptLanguageMatch(true, 2, 1d);
         }
 
         if (AreEquivalentAcceptLanguageValues(storedRequestValue, presentedRequestValue))
         {
-            return true;
+            return new AcceptLanguageMatch(true, 1, 1d);
         }
 
         if (string.IsNullOrEmpty(presentedRequestValue))
         {
-            return false;
+            return default;
         }
 
         if (!TryGetContentLanguages(variant, out var contentLanguages))
         {
-            return false;
+            return default;
         }
 
         var presentedRanges = ParseLanguageRanges(presentedRequestValue);
         if (presentedRanges.Count == 0)
         {
-            return false;
+            return default;
         }
 
-        return contentLanguages.Any(language => IsLanguageAcceptable(language, presentedRanges));
+        var bestWeight = 0d;
+        foreach (var language in contentLanguages)
+        {
+            var matchWeight = GetLanguageMatchWeight(language, presentedRanges);
+            if (matchWeight > bestWeight)
+            {
+                bestWeight = matchWeight;
+            }
+        }
+
+        return bestWeight > 0d
+            ? new AcceptLanguageMatch(true, 0, bestWeight)
+            : default;
     }
 
     private static bool AreEquivalentAcceptLanguageValues(string left, string right)
@@ -285,12 +353,12 @@ internal static class VaryMatcher
         }
     }
 
-    private static bool IsLanguageAcceptable(string contentLanguage, IReadOnlyList<LanguageRange> presentedRanges)
+    private static double GetLanguageMatchWeight(string contentLanguage, IReadOnlyList<LanguageRange> presentedRanges)
     {
         var normalizedContentLanguage = contentLanguage.Trim().ToLowerInvariant();
         if (normalizedContentLanguage.Length == 0)
         {
-            return false;
+            return 0d;
         }
 
         var bestWeight = 0d;
@@ -307,7 +375,7 @@ internal static class VaryMatcher
             }
         }
 
-        return bestWeight > 0d;
+        return bestWeight;
     }
 
     private static bool LanguageRangeMatches(string range, string languageTag)
@@ -340,8 +408,16 @@ internal static class VaryMatcher
 
         return string.Join(",",
             map.OrderBy(static item => item.Key, StringComparer.Ordinal)
-                .Select(static item => $"{item.Key};q={item.Value:0.###}"));
+                .Select(static item => $"{item.Key};q={item.Value.ToString("0.###", CultureInfo.InvariantCulture)}"));
     }
+
+    private readonly record struct VariantMatchScore(
+        int ExactHeaderCount,
+        int AcceptLanguageMatchRank,
+        double AcceptLanguageWeight,
+        DateTimeOffset CachedAt);
+
+    private readonly record struct AcceptLanguageMatch(bool IsMatch, int MatchRank, double Weight);
 
     private readonly record struct LanguageRange(string Range, double Weight);
 }

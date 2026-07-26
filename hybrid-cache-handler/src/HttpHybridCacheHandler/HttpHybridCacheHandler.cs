@@ -123,26 +123,33 @@ public class HttpHybridCacheHandler : DelegatingHandler
         if (requestCacheControl?.OnlyIfCached == true)
         {
             var cacheKey = GenerateVaryAwareCacheKey(request);
-            var onlyIfCachedEntry = await GetCacheEntryAsync(cacheKey, ct);
-            if (onlyIfCachedEntry != null)
+            try
             {
-                var cachedVariant = VaryMatcher.SelectVariant(onlyIfCachedEntry, request);
-                if (cachedVariant != null)
+                var onlyIfCachedEntry = await GetCacheEntryAsync(cacheKey, ct);
+                if (onlyIfCachedEntry != null)
                 {
-                    if (TryCreateConditionalNotModifiedResponse(request, cachedVariant, out var notModifiedResponse))
+                    var cachedVariant = VaryMatcher.SelectVariant(onlyIfCachedEntry, request);
+                    if (cachedVariant != null)
                     {
-                        AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, cachedVariant);
-                        return notModifiedResponse;
-                    }
+                        if (TryCreateConditionalNotModifiedResponse(request, cachedVariant, out var notModifiedResponse))
+                        {
+                            AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, cachedVariant);
+                            return notModifiedResponse;
+                        }
 
-                    var response = await DeserializeResponseAsync(cachedVariant, ct);
-                    if (response != null)
-                    {
-                        ApplyAgeHeader(response, cachedVariant);
-                        AddDiagnosticHeaders(response, DiagnosticHeaders.HitOnlyIfCached, cachedVariant);
-                        return response;
+                        var response = await DeserializeResponseAsync(cachedVariant, ct);
+                        if (response != null)
+                        {
+                            ApplyAgeHeader(response, cachedVariant);
+                            AddDiagnosticHeaders(response, DiagnosticHeaders.HitOnlyIfCached, cachedVariant);
+                            return response;
+                        }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                _logger.CacheOperationFailed(request.RequestUri, ex);
             }
 
             // Return 504 Gateway Timeout if not in cache

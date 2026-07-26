@@ -2,6 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
+using Microsoft.Extensions.Caching.Hybrid;
 
 namespace DamianH.HttpHybridCacheHandler;
 
@@ -260,5 +261,53 @@ public class RequestDirectivesTests
 
         response.StatusCode.ShouldBe(HttpStatusCode.GatewayTimeout); // 504
         mockHandler.RequestCount.ShouldBe(0); // No request to origin
+    }
+    [Fact]
+    public async Task Only_if_cached_returns_504_when_cache_read_fails()
+    {
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("response"),
+            Headers = { { "Cache-Control", "max-age=3600" } }
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            customCache: new ThrowOnGetCache());
+        using var client = fixture.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request.Headers.Add("Cache-Control", "only-if-cached");
+        var response = await client.SendAsync(request, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.GatewayTimeout);
+        mockHandler.RequestCount.ShouldBe(0);
+    }
+
+    private sealed class ThrowOnGetCache : HybridCache
+    {
+        public override ValueTask<T> GetOrCreateAsync<TState, T>(
+            string key,
+            TState state,
+            Func<TState, Ct, ValueTask<T>> factory,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default) =>
+            throw new InvalidOperationException("Simulated cache read failure");
+
+        public override ValueTask SetAsync<T>(
+            string key,
+            T value,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default) => ValueTask.CompletedTask;
+
+        public override ValueTask RemoveAsync(string key, Ct cancellationToken = default) => ValueTask.CompletedTask;
+
+        public override ValueTask RemoveAsync(IEnumerable<string> keys, Ct cancellationToken = default) => ValueTask.CompletedTask;
+
+        public override ValueTask RemoveByTagAsync(string tag, Ct cancellationToken = default) => ValueTask.CompletedTask;
+
+        public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default) => ValueTask.CompletedTask;
     }
 }

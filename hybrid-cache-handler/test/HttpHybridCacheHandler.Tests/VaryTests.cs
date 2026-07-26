@@ -1,6 +1,7 @@
 // Copyright (c) Damian Hickey. All rights reserved.
 // See LICENSE in the project root for license information.
 
+using System.Globalization;
 using System.Net;
 
 namespace DamianH.HttpHybridCacheHandler;
@@ -427,5 +428,75 @@ public class VaryTests
         await client.SendAsync(request2, _ct);
 
         mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Accept_Language_signature_uses_invariant_q_formatting()
+    {
+        var originalCulture = CultureInfo.CurrentCulture;
+        var originalUiCulture = CultureInfo.CurrentUICulture;
+        try
+        {
+            var frenchCulture = CultureInfo.GetCultureInfo("fr-FR");
+            CultureInfo.CurrentCulture = frenchCulture;
+            CultureInfo.CurrentUICulture = frenchCulture;
+
+            var signature = VaryMatcher.BuildVariantSignature(
+                ["Accept-Language"],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Accept-Language"] = "en;q=0.5"
+                });
+
+            signature.ShouldBe("accept-language=en;q=0.5");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+            CultureInfo.CurrentUICulture = originalUiCulture;
+        }
+    }
+
+    [Fact]
+    public async Task Accept_Language_prefers_variant_with_highest_quality_content_language_match()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(async request =>
+        {
+            requestCount++;
+            var language = request.Headers.AcceptLanguage
+                .FirstOrDefault()?.Value?
+                .StartsWith("de", StringComparison.OrdinalIgnoreCase) == true
+                ? "de"
+                : "en";
+
+            var response = new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent($"response_{language}")
+            };
+            response.Headers.Add("Cache-Control", "max-age=3600");
+            response.Headers.Add("Vary", "Accept-Language");
+            response.Content.Headers.ContentLanguage.Add(language);
+            return await Task.FromResult(response);
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Accept-Language", "en");
+        await client.SendAsync(request1, _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Accept-Language", "de");
+        await client.SendAsync(request2, _ct);
+
+        var request3 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request3.Headers.Add("Accept-Language", "de;q=0.9, en;q=0.8");
+        var response3 = await client.SendAsync(request3, _ct);
+
+        (await response3.Content.ReadAsStringAsync(_ct)).ShouldBe("response_de");
+        requestCount.ShouldBe(2);
     }
 }
