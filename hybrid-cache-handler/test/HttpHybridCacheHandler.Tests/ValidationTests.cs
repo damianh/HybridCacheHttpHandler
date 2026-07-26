@@ -3,6 +3,7 @@
 
 using System.Net;
 using System.Net.Http.Headers;
+using System.Globalization;
 
 namespace DamianH.HttpHybridCacheHandler;
 
@@ -746,7 +747,7 @@ public class ValidationTests
                 VaryHeaders = ["Foo"],
                 VaryHeaderValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    ["Foo"] = i.ToString()
+                    ["Foo"] = i.ToString(CultureInfo.InvariantCulture)
                 },
                 StaleWhileRevalidate = currentVariant.StaleWhileRevalidate,
                 StaleIfError = currentVariant.StaleIfError,

@@ -753,11 +753,12 @@ public class HttpHybridCacheHandler : DelegatingHandler
         string cacheKey)
     {
         var requestUriTag = GetUriTag(originalRequest.RequestUri);
-        HttpRequestMessage? revalidationRequest = null;
+        var requestUriForLogging = originalRequest.RequestUri;
         try
         {
-            revalidationRequest = CreateValidationRequest(originalRequest, cachedResponse, out var backgroundValidationUsesStoredValidator);
-            var revalidatedResponse = await base.SendAsync(revalidationRequest, Ct.None);
+            using var revalidationRequest = CreateValidationRequest(originalRequest, cachedResponse, out var backgroundValidationUsesStoredValidator);
+            requestUriForLogging = revalidationRequest.RequestUri;
+            using var revalidatedResponse = await base.SendAsync(revalidationRequest, Ct.None);
             var currentEntry = await GetCacheEntryAsync(cacheKey, Ct.None) ?? cachedEntry;
 
             // Snapshot raw headers before typed access normalizes them
@@ -830,7 +831,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         catch (Exception ex)
         {
             // Background revalidation failed, keep stale entry
-            _logger.BackgroundRevalidationFailed(revalidationRequest?.RequestUri ?? originalRequest.RequestUri, ex);
+            _logger.BackgroundRevalidationFailed(requestUriForLogging, ex);
         }
     }
 
