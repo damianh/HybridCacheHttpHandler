@@ -805,6 +805,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var updatedMaxAge = directives.MaxAge;
         var updatedExpires = notModifiedContentHeaders?.Expires;
         var updatedDate = notModifiedResponse.Headers.Date;
+        var responseHasCacheControl = GetHeaderValues(notModifiedResponse.Headers, "Cache-Control").Length > 0;
+        var (updatedStaleWhileRevalidate, updatedStaleIfError) = ParseStaleDirectives(notModifiedResponse.Headers);
         var ignoreStoredAge = hasAnyDirectiveHeaders ? directives.IgnoreStoredAge : cached.IgnoreStoredAge;
         var effectiveQualifiedNoCacheHeaderNames = hasAnyDirectiveHeaders
             ? directives.QualifiedNoCacheHeaderNames
@@ -822,6 +824,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
         UpsertHeaderDictionary(mergedHeaders, updatedResponseHeaders);
         UpsertHeaderDictionary(mergedContentHeaders, updatedResponseContentHeaders);
         NormalizeContentTypeHeader(mergedContentHeaders);
+        var updatedEtag = updatedResponseHeaders.TryGetValue("ETag", out var updatedETagValues)
+            ? updatedETagValues.FirstOrDefault()
+            : null;
 
         // Extract Age from 304 response if present
         var updatedAge = ParseAgeHeader(notModifiedResponse);
@@ -837,15 +842,15 @@ public class HttpHybridCacheHandler : DelegatingHandler
             CachedAt = _timeProvider.GetUtcNow(),
             MaxAge = updatedMaxAge ?? cached.MaxAge,
             HasSharedMaxAge = hasAnyDirectiveHeaders ? directives.HasSharedMaxAge : cached.HasSharedMaxAge,
-            ETag = notModifiedResponse.Headers.ETag?.Tag ?? cached.ETag,
+            ETag = string.IsNullOrWhiteSpace(updatedEtag) ? cached.ETag : updatedEtag,
             LastModified = notModifiedContentHeaders?.LastModified ?? cached.LastModified,
             Expires = updatedExpires ?? cached.Expires,
             Date = updatedDate ?? cached.Date,
             Age = ignoreStoredAge ? TimeSpan.Zero : updatedAge ?? cached.Age,
             VaryHeaders = cached.VaryHeaders,
             VaryHeaderValues = cached.VaryHeaderValues,
-            StaleWhileRevalidate = cached.StaleWhileRevalidate,
-            StaleIfError = cached.StaleIfError,
+            StaleWhileRevalidate = responseHasCacheControl ? updatedStaleWhileRevalidate : cached.StaleWhileRevalidate,
+            StaleIfError = responseHasCacheControl ? updatedStaleIfError : cached.StaleIfError,
             MustRevalidate = hasAnyDirectiveHeaders ? directives.MustRevalidate : cached.MustRevalidate,
             ProxyRevalidate = hasAnyDirectiveHeaders ? directives.ProxyRevalidate : cached.ProxyRevalidate,
             NoCache = hasAnyDirectiveHeaders ? directives.NoCache : cached.NoCache,
@@ -1234,7 +1239,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return true;
         }
 
-        var responseLastModified = response.Content.Headers.LastModified;
+        var responseLastModified = response.Content?.Headers.LastModified;
         if (cached.LastModified.HasValue &&
             responseLastModified.HasValue &&
             cached.LastModified.Value != responseLastModified.Value)
@@ -1533,7 +1538,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return cachedResponse.LastModified.Value <= ifModifiedSinceDate;
         }
 
-        return cachedResponse.Date.HasValue && cachedResponse.Date.Value >= ifModifiedSinceDate;
+        return cachedResponse.Date.HasValue && cachedResponse.Date.Value <= ifModifiedSinceDate;
     }
 
     private static HttpResponseMessage CreateNotModifiedResponse(HttpRequestMessage request, CachedHttpMetadata cachedResponse)
@@ -2068,6 +2073,32 @@ public class HttpHybridCacheHandler : DelegatingHandler
         return [];
     }
 
+    private static (TimeSpan? StaleWhileRevalidate, TimeSpan? StaleIfError) ParseStaleDirectives(HttpHeaders headers)
+    {
+        TimeSpan? staleWhileRevalidate = null;
+        TimeSpan? staleIfError = null;
+        var cacheControlValues = GetHeaderValues(headers, "Cache-Control");
+        if (cacheControlValues.Length == 0)
+        {
+            return (staleWhileRevalidate, staleIfError);
+        }
+
+        var cacheControlString = string.Join(", ", cacheControlValues);
+        var swrMatch = CacheControlRegexes.StaleWhileRevalidate().Match(cacheControlString);
+        if (swrMatch.Success && int.TryParse(swrMatch.Groups[1].Value, out var swrSeconds))
+        {
+            staleWhileRevalidate = TimeSpan.FromSeconds(swrSeconds);
+        }
+
+        var sieMatch = CacheControlRegexes.StaleIfError().Match(cacheControlString);
+        if (sieMatch.Success && int.TryParse(sieMatch.Groups[1].Value, out var sieSeconds))
+        {
+            staleIfError = TimeSpan.FromSeconds(sieSeconds);
+        }
+
+        return (staleWhileRevalidate, staleIfError);
+    }
+
     private static bool ContainsDirectiveToken(string cacheControlValue, string token)
     {
         if (string.IsNullOrWhiteSpace(cacheControlValue))
@@ -2096,6 +2127,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 continue;
             }
 
+            token = NormalizeDirectiveToken(token);
             if (!IsValidDirectiveToken(token))
             {
                 directives = new TargetedCacheDirectives();
@@ -2159,6 +2191,19 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         return true;
+    }
+
+    private static string NormalizeDirectiveToken(string token)
+    {
+        var equalsIndex = token.IndexOf('=');
+        if (equalsIndex < 0)
+        {
+            return token;
+        }
+
+        var key = token[..equalsIndex].TrimEnd();
+        var value = token[(equalsIndex + 1)..].TrimStart();
+        return string.Concat(key, "=", value);
     }
 
     private static bool IsValidDirectiveToken(string token)
@@ -2831,25 +2876,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var proxyRevalidate = directives.ProxyRevalidate;
         var noCache = directives.NoCache;
 
-        // Parse Cache-Control extensions manually since HttpClient doesn't expose them
-        if (response.Headers.TryGetValues("Cache-Control", out var cacheControlValues))
-        {
-            var cacheControlString = string.Join(", ", cacheControlValues);
-
-            // Extract stale-while-revalidate
-            var swrMatch = CacheControlRegexes.StaleWhileRevalidate().Match(cacheControlString);
-            if (swrMatch.Success && int.TryParse(swrMatch.Groups[1].Value, out var swrSeconds))
-            {
-                staleWhileRevalidate = TimeSpan.FromSeconds(swrSeconds);
-            }
-
-            // Extract stale-if-error
-            var sieMatch = CacheControlRegexes.StaleIfError().Match(cacheControlString);
-            if (sieMatch.Success && int.TryParse(sieMatch.Groups[1].Value, out var sieSeconds))
-            {
-                staleIfError = TimeSpan.FromSeconds(sieSeconds);
-            }
-        }
+        (staleWhileRevalidate, staleIfError) = ParseStaleDirectives(response.Headers);
 
         // Store content separately (always, to avoid Base64 encoding)
         // Store content first (write order: content before metadata for atomicity)

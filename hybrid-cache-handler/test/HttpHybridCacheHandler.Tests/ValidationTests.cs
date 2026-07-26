@@ -102,6 +102,101 @@ public class ValidationTests
     }
 
     [Fact]
+    public async Task Response_304_updates_stale_if_error_window()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("cached")
+                };
+                response.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1, stale-if-error=1");
+                response.Headers.TryAddWithoutValidation("ETag", "\"v1\"");
+                return response;
+            }
+
+            if (requestCount == 2)
+            {
+                var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+                notModifiedResponse.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1, stale-if-error=10");
+                notModifiedResponse.Headers.TryAddWithoutValidation("ETag", "\"v1\"");
+                return notModifiedResponse;
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("origin-down")
+            };
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/stale-window-update", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        await client.GetAsync("https://example.com/stale-window-update", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(5));
+
+        var response = await client.GetAsync("https://example.com/stale-window-update", _ct);
+        var body = await response.Content.ReadAsStringAsync(_ct);
+
+        requestCount.ShouldBe(3);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        body.ShouldBe("cached");
+    }
+
+    [Fact]
+    public async Task Response_304_uses_raw_weak_etag_for_next_validation()
+    {
+        var requestCount = 0;
+        HttpRequestMessage? validationRequest = null;
+        var mockHandler = new MockHttpMessageHandler(req =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("content")
+                };
+                response.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1");
+                response.Headers.TryAddWithoutValidation("ETag", "\"v1\"");
+                return Task.FromResult(response);
+            }
+
+            if (requestCount == 2)
+            {
+                var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+                notModifiedResponse.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1");
+                notModifiedResponse.Headers.TryAddWithoutValidation("ETag", "w/\"v2\"");
+                return Task.FromResult(notModifiedResponse);
+            }
+
+            validationRequest = req;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/etag-update", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        await client.GetAsync("https://example.com/etag-update", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        await client.GetAsync("https://example.com/etag-update", _ct);
+
+        requestCount.ShouldBe(3);
+        validationRequest.ShouldNotBeNull();
+        validationRequest.Headers.TryGetValues("If-None-Match", out var values).ShouldBeTrue();
+        values!.Single().ShouldStartWith("W/", Case.Insensitive);
+        values.Single().ShouldContain("\"v2\"");
+    }
+
+    [Fact]
     public async Task Response_304_without_age_preserves_cached_age()
     {
         var requestCount = 0;

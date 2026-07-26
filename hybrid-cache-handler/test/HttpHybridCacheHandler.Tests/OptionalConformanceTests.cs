@@ -162,7 +162,7 @@ public class OptionalConformanceTests
             Content = new StringContent("cdn")
         };
         response.Headers.TryAddWithoutValidation("Cache-Control", "no-store");
-        response.Headers.TryAddWithoutValidation("CDN-Cache-Control", "max-age=60");
+        response.Headers.TryAddWithoutValidation("CDN-Cache-Control", "max-age = 60");
 
         var mockHandler = new MockHttpMessageHandler(response);
         await using var fixture = new HttpHybridCacheHandlerFixture(
@@ -387,6 +387,45 @@ public class OptionalConformanceTests
         var body = await response.Content.ReadAsStringAsync(_ct);
 
         requestCount.ShouldBe(2); // Initial GET + HEAD only (final GET served from cache)
+        body.ShouldBe("v1");
+    }
+
+    [Fact]
+    public async Task Head_refresh_with_null_content_does_not_invalidate_cached_get()
+    {
+        var sequenceHandler = new SequenceMessageHandler(req =>
+        {
+            if (req.Method == HttpMethod.Head)
+            {
+                var head = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = null
+                };
+                head.Headers.TryAddWithoutValidation("Cache-Control", "max-age=120");
+                head.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+                return head;
+            }
+
+            var get = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("v1")
+            };
+            get.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1");
+            get.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+            return get;
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(sequenceHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/head-null-content", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, "https://example.com/head-null-content"), _ct);
+
+        var response = await client.GetAsync("https://example.com/head-null-content", _ct);
+        var body = await response.Content.ReadAsStringAsync(_ct);
+
+        sequenceHandler.RequestCount.ShouldBe(2);
         body.ShouldBe("v1");
     }
 
@@ -778,6 +817,19 @@ public class OptionalConformanceTests
         response.Content.Headers.ContentRange = new ContentRangeHeaderValue(from, to, totalLength);
         response.Headers.AcceptRanges.Add("bytes");
         return response;
+    }
+
+    private sealed class SequenceMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, Ct cancellationToken)
+        {
+            RequestCount++;
+            var response = responder(request);
+            response.RequestMessage = request;
+            return Task.FromResult(response);
+        }
     }
 
 }
