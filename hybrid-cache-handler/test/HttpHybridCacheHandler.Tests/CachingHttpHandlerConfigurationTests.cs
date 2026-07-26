@@ -2,6 +2,8 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace DamianH.HttpHybridCacheHandler;
 
@@ -120,6 +122,17 @@ public class CachingHttpHandlerConfigurationTests
         options.TargetedCacheControlHeaderNames[0] = "X-Test-Cache-Control";
 
         HttpHybridCacheHandlerOptions.DefaultTargetedCacheControlHeaderNames[0].ShouldBe("CDN-Cache-Control");
+    }
+
+    [Fact]
+    public void Cap_max_cacheable_content_size_to_hybrid_cache_limit()
+    {
+        using var services = new ServiceCollection()
+            .AddHttpHybridCacheHandler(options => options.MaxCacheableContentSize = long.MaxValue)
+            .BuildServiceProvider();
+
+        var options = services.GetRequiredService<IOptions<HttpHybridCacheHandlerOptions>>().Value;
+        options.MaxCacheableContentSize.ShouldBe(int.MaxValue);
     }
 
     [Fact]

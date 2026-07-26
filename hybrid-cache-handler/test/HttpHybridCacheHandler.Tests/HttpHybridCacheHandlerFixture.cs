@@ -18,7 +18,8 @@ public class HttpHybridCacheHandlerFixture : IAsyncDisposable
     public HttpHybridCacheHandlerFixture(
         HttpMessageHandler? primaryHandler = null,
         Action<HttpHybridCacheHandlerOptions>? configureHandlerOptions = null,
-        HybridCache? customCache = null)
+        HybridCache? customCache = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         primaryHandler ??= new SocketsHttpHandler
         {
@@ -36,6 +37,7 @@ public class HttpHybridCacheHandlerFixture : IAsyncDisposable
             .ConfigurePrimaryHttpMessageHandler(_ => primaryHandler)
             .AddHttpMessageHandler(sp => sp.GetRequiredService<HttpHybridCacheHandler>())
             .Services;
+        configureServices?.Invoke(serviceCollection);
 
         // If custom cache provided, replace the keyed HybridCache registration
         if (customCache != null)

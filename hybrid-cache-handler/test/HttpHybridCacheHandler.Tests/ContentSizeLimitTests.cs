@@ -3,6 +3,8 @@
 
 using System.Net;
 using System.Net.Http.Headers;
+using DamianH.FileDistributedCache;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DamianH.HttpHybridCacheHandler;
 
@@ -193,26 +195,60 @@ public class ContentSizeLimitTests
     public async Task Response_between_1MiB_and_10MiB_is_cached_with_default_settings()
     {
         // 2 MiB — above HybridCache's old default MaximumPayloadBytes (1 MiB) but within
-        // MaxCacheableContentSize (10 MB). Without the fix this is silently never cached.
+        // MaxCacheableContentSize (10 MiB). Without the fix this is silently never cached.
         var content = new byte[2 * 1024 * 1024];
         Array.Fill(content, (byte)'x');
+        var cacheDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "HttpHybridCacheHandler.Tests",
+            $"{nameof(Response_between_1MiB_and_10MiB_is_cached_with_default_settings)}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cacheDirectory);
 
-        var mockResponse = new HttpResponseMessage
+        try
         {
-            StatusCode = HttpStatusCode.OK,
-            Content = new ByteArrayContent(content)
-        };
-        mockResponse.Content.Headers.ContentType = new MediaTypeHeaderValue("image/png");
-        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
-        var mockHandler = new MockHttpMessageHandler(mockResponse);
+            var firstResponse = new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new ByteArrayContent(content)
+            };
+            firstResponse.Content.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+            firstResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+            var firstHandler = new MockHttpMessageHandler(firstResponse);
+            await using (var firstFixture = new HttpHybridCacheHandlerFixture(
+                             firstHandler,
+                             configureServices: services => services.AddFileDistributedCache(options => options.CacheDirectory = cacheDirectory)))
+            {
+                using var firstClient = firstFixture.CreateClient();
+                await firstClient.GetAsync(TestUrl, _ct);
+            }
+            firstHandler.RequestCount.ShouldBe(1);
 
-        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler); // default options
-        using var client = fixture.CreateClient();
-
-        await client.GetAsync(TestUrl, _ct);
-        await client.GetAsync(TestUrl, _ct);
-
-        mockHandler.RequestCount.ShouldBe(1); // Second request served from cache
+            var secondResponse = new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new ByteArrayContent(content)
+            };
+            secondResponse.Content.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+            secondResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+            var secondHandler = new MockHttpMessageHandler(secondResponse);
+            await using (var secondFixture = new HttpHybridCacheHandlerFixture(
+                             secondHandler,
+                             configureServices: services => services.AddFileDistributedCache(options => options.CacheDirectory = cacheDirectory)))
+            {
+                using var secondClient = secondFixture.CreateClient();
+                using var cachedResponse = await secondClient.GetAsync(TestUrl, _ct);
+                var cachedContent = await cachedResponse.Content.ReadAsByteArrayAsync(_ct);
+                cachedContent.Length.ShouldBe(content.Length);
+            }
+            secondHandler.RequestCount.ShouldBe(0); // Served from distributed cache in a new service provider
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDirectory))
+            {
+                Directory.Delete(cacheDirectory, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -237,4 +273,3 @@ public class ContentSizeLimitTests
         mockHandler.RequestCount.ShouldBe(1); // Empty response cached
     }
 }
-

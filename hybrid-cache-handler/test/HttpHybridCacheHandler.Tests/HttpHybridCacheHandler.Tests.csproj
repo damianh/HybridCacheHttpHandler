@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\HttpHybridCacheHandler\HttpHybridCacheHandler.csproj" />
+    <ProjectReference Include="..\..\..\file-distributed-cache\src\FileDistributedCache\FileDistributedCache.csproj" />
   </ItemGroup>
 
   <ItemGroup>
