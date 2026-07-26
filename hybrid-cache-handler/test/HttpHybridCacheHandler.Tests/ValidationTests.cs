@@ -121,13 +121,19 @@ public class ValidationTests
 
             if (requestCount == 2)
             {
-                var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+                var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified)
+                {
+                    Content = new ByteArrayContent([])
+                };
                 notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
                 notModifiedResponse.Headers.TryAddWithoutValidation("Set-Cookie", "session=from-304");
                 return notModifiedResponse;
             }
 
-            var updatedNotModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+            var updatedNotModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = new ByteArrayContent([])
+            };
             updatedNotModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromMinutes(2) };
             updatedNotModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
             return updatedNotModifiedResponse;

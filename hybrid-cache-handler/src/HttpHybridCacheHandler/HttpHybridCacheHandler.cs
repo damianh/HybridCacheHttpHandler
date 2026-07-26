@@ -789,10 +789,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
     private CachedHttpMetadata UpdateCachedEntry(CachedHttpMetadata cached, HttpResponseMessage notModifiedResponse)
     {
         // Update metadata from 304 response while keeping the cached body
+        var notModifiedContentHeaders = notModifiedResponse.Content?.Headers;
         var directives = GetEffectiveCacheDirectives(notModifiedResponse);
         var hasAnyDirectiveHeaders = HasAnyDirectiveHeaders(notModifiedResponse);
         var updatedMaxAge = directives.MaxAge;
-        var updatedExpires = notModifiedResponse.Content.Headers.Expires;
+        var updatedExpires = notModifiedContentHeaders?.Expires;
         var updatedDate = notModifiedResponse.Headers.Date;
         var effectiveQualifiedNoCacheHeaderNames = hasAnyDirectiveHeaders
             ? directives.QualifiedNoCacheHeaderNames
@@ -800,7 +801,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var mergedHeaders = new Dictionary<string, string[]>(cached.Headers, StringComparer.OrdinalIgnoreCase);
         var mergedContentHeaders = new Dictionary<string, string[]>(cached.ContentHeaders, StringComparer.OrdinalIgnoreCase);
         var updatedResponseHeaders = CaptureHeaders(notModifiedResponse.Headers);
-        var updatedResponseContentHeaders = CaptureHeaders(notModifiedResponse.Content.Headers);
+        var updatedResponseContentHeaders = notModifiedContentHeaders != null
+            ? CaptureHeaders(notModifiedContentHeaders)
+            : new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         updatedResponseContentHeaders.Remove("Content-Length");
         var stripNames = BuildStoredHeaderStripSet(notModifiedResponse, effectiveQualifiedNoCacheHeaderNames);
         RemoveHeaders(updatedResponseHeaders, stripNames);
@@ -824,7 +827,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             MaxAge = updatedMaxAge ?? cached.MaxAge,
             HasSharedMaxAge = hasAnyDirectiveHeaders ? directives.HasSharedMaxAge : cached.HasSharedMaxAge,
             ETag = notModifiedResponse.Headers.ETag?.Tag ?? cached.ETag,
-            LastModified = notModifiedResponse.Content.Headers.LastModified ?? cached.LastModified,
+            LastModified = notModifiedContentHeaders?.LastModified ?? cached.LastModified,
             Expires = updatedExpires ?? cached.Expires,
             Date = updatedDate ?? cached.Date,
             Age = directives.IgnoreStoredAge ? TimeSpan.Zero : updatedAge ?? TimeSpan.Zero,
@@ -1085,8 +1088,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return null;
         }
 
-        var completePayload = await cachedCompleteResponse.Content.ReadAsByteArrayAsync(ct);
-        return TryBuildRangeResponse(cachedCompleteResponse, completePayload, requestedRange, request);
+        return await TryBuildRangeResponseAsync(cachedCompleteResponse, requestedRange, request, ct);
     }
 
     private async Task<HttpResponseMessage?> TryServeRangeFromCachedPartialAsync(
@@ -1122,7 +1124,15 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         var cachedPayload = await cachedResponse.Content.ReadAsByteArrayAsync(ct);
         var payloadRangeStart = cachedPartialEntry.RangeStart.Value;
-        var payloadRangeEnd = payloadRangeStart + cachedPayload.LongLength - 1;
+        long payloadRangeEnd;
+        try
+        {
+            payloadRangeEnd = checked(payloadRangeStart + cachedPayload.LongLength - 1);
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
 
         if (!requestedRange.From.HasValue && requestedRange.To.HasValue)
         {
@@ -1145,15 +1155,19 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return null;
         }
 
-        var relativeStart = checked((int)(requestedStart - payloadRangeStart));
-        var relativeEnd = checked((int)(requestedEnd - payloadRangeStart));
-        if (relativeStart < 0 ||
-            relativeEnd < relativeStart ||
-            relativeEnd >= cachedPayload.Length)
+        var relativeStartLong = requestedStart - payloadRangeStart;
+        var relativeEndLong = requestedEnd - payloadRangeStart;
+        if (relativeStartLong < 0 ||
+            relativeEndLong < relativeStartLong ||
+            relativeEndLong >= cachedPayload.LongLength ||
+            relativeStartLong > int.MaxValue ||
+            relativeEndLong > int.MaxValue)
         {
             return null;
         }
 
+        var relativeStart = (int)relativeStartLong;
+        var relativeEnd = (int)relativeEndLong;
         var sliceLength = relativeEnd - relativeStart + 1;
         var rangePayload = new byte[sliceLength];
         Array.Copy(cachedPayload, relativeStart, rangePayload, 0, sliceLength);
@@ -1228,20 +1242,45 @@ public class HttpHybridCacheHandler : DelegatingHandler
         return true;
     }
 
-    private static HttpResponseMessage? TryBuildRangeResponse(
+    private static async Task<HttpResponseMessage?> TryBuildRangeResponseAsync(
         HttpResponseMessage completeResponse,
-        byte[] completePayload,
         ByteRangeRequest requestedRange,
-        HttpRequestMessage request)
+        HttpRequestMessage request,
+        Ct ct)
     {
-        if (!TryResolveRange(requestedRange, completePayload.LongLength, out var start, out var end))
+        using var completePayloadStream = await completeResponse.Content.ReadAsStreamAsync(ct);
+        if (!completePayloadStream.CanSeek)
         {
             return null;
         }
 
-        var sliceLength = checked((int)(end - start + 1));
+        var totalLength = completePayloadStream.Length;
+        if (!TryResolveRange(requestedRange, totalLength, out var start, out var end))
+        {
+            return null;
+        }
+
+        var sliceLengthLong = end - start + 1;
+        if (sliceLengthLong <= 0 || sliceLengthLong > int.MaxValue)
+        {
+            return null;
+        }
+
+        var sliceLength = (int)sliceLengthLong;
         var rangePayload = new byte[sliceLength];
-        Array.Copy(completePayload, start, rangePayload, 0, sliceLength);
+        completePayloadStream.Seek(start, SeekOrigin.Begin);
+
+        var bytesRead = 0;
+        while (bytesRead < sliceLength)
+        {
+            var read = await completePayloadStream.ReadAsync(rangePayload.AsMemory(bytesRead), ct);
+            if (read == 0)
+            {
+                return null;
+            }
+
+            bytesRead += read;
+        }
 
         var partialResponse = new HttpResponseMessage(HttpStatusCode.PartialContent)
         {
@@ -1261,7 +1300,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             partialResponse.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        partialResponse.Content.Headers.ContentRange = new ContentRangeHeaderValue(start, end, completePayload.LongLength);
+        partialResponse.Content.Headers.ContentRange = new ContentRangeHeaderValue(start, end, totalLength);
         partialResponse.Content.Headers.ContentLength = sliceLength;
 
         if (!partialResponse.Headers.AcceptRanges.Contains("bytes"))
@@ -2153,18 +2192,28 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return [];
         }
 
-        var match = CacheControlRegexes.QualifiedNoCache().Match(cacheControlValue);
-        if (!match.Success)
+        var matches = CacheControlRegexes.QualifiedNoCache().Matches(cacheControlValue);
+        if (matches.Count == 0)
         {
             return [];
         }
 
-        return match.Groups[1].Value
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .Select(v => v.Trim('"'))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var headerNames = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in matches)
+        {
+            foreach (var value in match.Groups[1].Value
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var headerName = value.Trim('"');
+                if (!string.IsNullOrWhiteSpace(headerName) && seen.Add(headerName))
+                {
+                    headerNames.Add(headerName);
+                }
+            }
+        }
+
+        return [.. headerNames];
     }
 
     private bool HasAnyDirectiveHeaders(HttpResponseMessage response)
