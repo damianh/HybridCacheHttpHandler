@@ -25,9 +25,4 @@ internal static partial class CacheControlRegexes
     [GeneratedRegex(@"(?:^|,)\s*must-understand\s*(?:,|$)", RegexOptions.IgnoreCase)]
     internal static partial Regex MustUnderstand();
 
-    [GeneratedRegex(@"(?:^|,)\s*max-age\s*=\s*(\d+)", RegexOptions.IgnoreCase)]
-    internal static partial Regex MaxAge();
-
-    [GeneratedRegex(@"(?:^|,)\s*s-maxage\s*=\s*(\d+)", RegexOptions.IgnoreCase)]
-    internal static partial Regex SharedMaxAge();
 }

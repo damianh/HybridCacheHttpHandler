@@ -188,8 +188,8 @@ public class ResponseDirectivesTests
             Content = new StringContent("response"),
             Headers = { { "Cache-Control", "max-age=0" } }
         });
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
