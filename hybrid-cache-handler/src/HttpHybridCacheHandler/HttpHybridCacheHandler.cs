@@ -123,6 +123,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         if (requestCacheControl?.OnlyIfCached == true)
         {
             var cacheKey = GenerateVaryAwareCacheKey(request);
+            var onlyIfCachedRequestUriTag = GetUriTag(request.RequestUri);
             try
             {
                 var onlyIfCachedEntry = await GetCacheEntryAsync(cacheKey, ct);
@@ -144,6 +145,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
                             AddDiagnosticHeaders(response, DiagnosticHeaders.HitOnlyIfCached, cachedVariant);
                             return response;
                         }
+
+                        await RemoveVariantFromEntryAsync(
+                            cacheKey,
+                            onlyIfCachedRequestUriTag,
+                            onlyIfCachedEntry,
+                            cachedVariant,
+                            request.RequestUri,
+                            ct);
                     }
                 }
             }
@@ -349,6 +358,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     var response = await DeserializeResponseAsync(updatedVariant, ct);
                     if (response == null)
                     {
+                        await RemoveVariantFromEntryAsync(
+                            cacheKey2,
+                            requestUriTag,
+                            cachedEntry,
+                            updatedVariant,
+                            request.RequestUri,
+                            ct);
+
                         // Content missing, return fresh response
                         RestoreRawHeaders(uncachedResponse, validationRawHeaders);
                         AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
@@ -541,6 +558,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 var response = await DeserializeResponseAsync(updatedVariant, ct);
                 if (response == null)
                 {
+                    await RemoveVariantFromEntryAsync(
+                        cacheKey2,
+                        requestUriTag,
+                        cachedEntry,
+                        updatedVariant,
+                        request.RequestUri,
+                        ct);
+
                     // Content missing - return fresh response
                     RestoreRawHeaders(uncachedResponse, staleValidationRawHeaders);
                     AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
@@ -1444,6 +1469,29 @@ public class HttpHybridCacheHandler : DelegatingHandler
         {
             Variants = variants
         };
+    }
+
+    private async Task RemoveVariantFromEntryAsync(
+        string cacheKey,
+        string? requestUriTag,
+        CachedHttpEntry fallbackEntry,
+        CachedHttpMetadata variantToRemove,
+        Uri? requestUri,
+        Ct cancellationToken)
+    {
+        try
+        {
+            await SetMergedEntryAsync(
+                cacheKey,
+                requestUriTag,
+                fallbackEntry,
+                current => RemoveVariant(current, variantToRemove),
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.CacheRemoveFailed(requestUri, ex);
+        }
     }
 
     private static CachedHttpEntry BuildEntryWithLimit(List<CachedHttpMetadata> variants)

@@ -285,6 +285,83 @@ public class ValidationTests
     }
 
     [Fact]
+    public async Task Response_304_for_no_cache_request_removes_variant_when_cached_body_missing()
+    {
+        var cache = new InspectableHybridCache();
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("original body")
+                };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+                response.Headers.ETag = new EntityTagHeaderValue("\"abc\"");
+                return response;
+            }
+
+            var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+            notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+            notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"abc\"");
+            return notModifiedResponse;
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler, customCache: cache);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        cache.RemoveContentForVariant(_ => true).ShouldBeTrue();
+
+        var noCacheRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        noCacheRequest.Headers.Add("Cache-Control", "no-cache");
+        var response = await client.SendAsync(noCacheRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        cache.GetMetadataEntry().ShouldBeNull();
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Response_304_for_stale_entry_removes_variant_when_cached_body_missing()
+    {
+        var cache = new InspectableHybridCache();
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("original body")
+                };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                response.Headers.ETag = new EntityTagHeaderValue("\"abc\"");
+                return response;
+            }
+
+            var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+            notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+            notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"abc\"");
+            return notModifiedResponse;
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler, customCache: cache);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        cache.RemoveContentForVariant(_ => true).ShouldBeTrue();
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var response = await client.GetAsync("https://example.com/resource", _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        cache.GetMetadataEntry().ShouldBeNull();
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Strong_vs_weak_ETag_comparison()
     {
         var mockResponse = new HttpResponseMessage

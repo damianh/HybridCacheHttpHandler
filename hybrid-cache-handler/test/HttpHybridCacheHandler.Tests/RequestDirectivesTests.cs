@@ -243,6 +243,63 @@ public class RequestDirectivesTests
     }
 
     [Fact]
+    public async Task Only_if_cached_with_missing_variant_body_removes_orphaned_variant()
+    {
+        var cache = new InspectableHybridCache();
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            var foo = request.Headers.TryGetValues("Foo", out var values)
+                ? string.Join(string.Empty, values)
+                : "missing";
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($"response_{foo}")
+            };
+            response.Headers.Add("Cache-Control", "max-age=3600");
+            response.Headers.Add("Vary", "Foo");
+            return Task.FromResult(response);
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler, customCache: cache);
+        using var client = fixture.CreateClient();
+
+        var shortRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        shortRequest.Headers.Add("Foo", "short");
+        await client.SendAsync(shortRequest, _ct);
+
+        var longRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        longRequest.Headers.Add("Foo", "long");
+        await client.SendAsync(longRequest, _ct);
+
+        cache.RemoveContentForVariant(v =>
+            v.VaryHeaderValues != null
+            && v.VaryHeaderValues.TryGetValue("Foo", out var value)
+            && value == "short").ShouldBeTrue();
+
+        var shortOnlyIfCached = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        shortOnlyIfCached.Headers.Add("Foo", "short");
+        shortOnlyIfCached.Headers.Add("Cache-Control", "only-if-cached");
+        var shortResponse = await client.SendAsync(shortOnlyIfCached, _ct);
+
+        shortResponse.StatusCode.ShouldBe(HttpStatusCode.GatewayTimeout);
+        mockHandler.RequestCount.ShouldBe(2);
+
+        var metadataEntry = cache.GetMetadataEntry();
+        metadataEntry.ShouldNotBeNull();
+        metadataEntry.Variants.Count.ShouldBe(1);
+        metadataEntry.Variants[0].VaryHeaderValues?["Foo"].ShouldBe("long");
+
+        var longOnlyIfCached = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        longOnlyIfCached.Headers.Add("Foo", "long");
+        longOnlyIfCached.Headers.Add("Cache-Control", "only-if-cached");
+        var longResponse = await client.SendAsync(longOnlyIfCached, _ct);
+
+        longResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await longResponse.Content.ReadAsStringAsync(_ct)).ShouldBe("response_long");
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Only_if_cached_returns_504_when_matching_variant_is_past_effective_lifetime()
     {
         var mockHandler = new MockHttpMessageHandler(request =>

@@ -662,6 +662,49 @@ public class VaryTests
     }
 
     [Fact]
+    public async Task Accept_Language_quality_selection_handles_whitespace_after_q_equals()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(async request =>
+        {
+            requestCount++;
+            var language = request.Headers.AcceptLanguage
+                .FirstOrDefault()?.Value?
+                .StartsWith("de", StringComparison.OrdinalIgnoreCase) == true
+                ? "de"
+                : "en";
+
+            var response = new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent($"response_{language}")
+            };
+            response.Headers.Add("Cache-Control", "max-age=3600");
+            response.Headers.Add("Vary", "Accept-Language");
+            response.Content.Headers.ContentLanguage.Add(language);
+            return await Task.FromResult(response);
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Accept-Language", "en");
+        await client.SendAsync(request1, _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Accept-Language", "de");
+        await client.SendAsync(request2, _ct);
+
+        var request3 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request3.Headers.Add("Accept-Language", "de;q= 0.1, en;q= 0.9");
+        var response3 = await client.SendAsync(request3, _ct);
+
+        (await response3.Content.ReadAsStringAsync(_ct)).ShouldBe("response_en");
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Variant_miss_write_merges_against_latest_cached_entry()
     {
         var initialVariant = CreateStoredFooVariant("1", DateTimeOffset.UnixEpoch);

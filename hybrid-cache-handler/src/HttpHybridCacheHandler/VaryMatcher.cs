@@ -336,7 +336,7 @@ internal static class VaryMatcher
                         continue;
                     }
 
-                    var rawQ = parameter[2..];
+                    var rawQ = parameter[2..].Trim();
                     if (double.TryParse(rawQ, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var parsedQ))
                     {
                         weight = Math.Max(0d, Math.Min(1d, parsedQ));
