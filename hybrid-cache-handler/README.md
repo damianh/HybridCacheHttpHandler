@@ -20,6 +20,7 @@ RFC 9111 compliant client-side HTTP caching for `HttpClient`, powered by .NET's 
 - [Performance & Memory](#performance--memory)
 - [Metrics](#metrics)
 - [Benchmarks](#benchmarks)
+- [RFC 9111 Conformance Suite](#rfc-9111-conformance-suite)
 - [Samples](#samples)
 
 ## Features
@@ -411,6 +412,35 @@ Run benchmarks to measure performance:
 ```bash
 dotnet run --project benchmarks/Benchmarks.csproj -c Release
 ```
+
+## RFC 9111 Conformance Suite
+
+The handler is tested against [http-tests/cache-tests](https://github.com/http-tests/cache-tests)
+(the HTTP caching test suite behind [cache-tests.fyi](https://cache-tests.fyi), used to assess
+browsers, proxies and CDNs). The suite's client sends scripted requests through a minimal YARP
+reverse proxy (`conformance/ConformanceProxy`) that uses `HttpHybridCacheHandler` in `Shared` mode.
+
+Run it locally:
+
+```bash
+# Windows
+./hybrid-cache-handler/conformance/run-conformance.ps1
+
+# Linux/macOS
+./hybrid-cache-handler/conformance/run-conformance.sh
+```
+
+The script clones the suite (pinned commit), starts the suite's origin server and the proxy, runs
+the full suite and compares `results.json` against the checked-in `expected-results.json` baseline.
+It fails only on regressions (a test that passed in the baseline now failing). Passing every test
+is not a goal — the suite itself documents that full passes are not expected; it measures behavior,
+including optional optimizations.
+
+- Debug a single test: `./run-conformance.ps1 -TestId <test-id>`
+- After a fix adds new passes: `./run-conformance.ps1 -Update` (or `run-conformance.sh --update`)
+  to ratchet the baseline, then commit `expected-results.json`.
+
+The `cache-conformance` CI job runs this on every push/PR and uploads `results.json` as an artifact.
 
 ## Samples
 

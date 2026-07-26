@@ -35,6 +35,9 @@
   <Folder Name="/hybrid-cache-handler/benchmarks/">
     <Project Path="hybrid-cache-handler/benchmarks/Benchmarks/Benchmarks.csproj" />
   </Folder>
+  <Folder Name="/hybrid-cache-handler/conformance/">
+    <Project Path="hybrid-cache-handler/conformance/ConformanceProxy/ConformanceProxy.csproj" />
+  </Folder>
   <Folder Name="/file-distributed-cache/">
   </Folder>
   <Folder Name="/file-distributed-cache/src/">
