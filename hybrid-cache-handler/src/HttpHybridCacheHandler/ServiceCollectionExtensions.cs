@@ -81,8 +81,21 @@ public static class ServiceCollectionExtensions
             });
             serviceCollection.AddTransient<HttpHybridCacheHandler>();
             serviceCollection.AddOptions<HttpHybridCacheHandlerOptions>()
-                .Configure(configure);
+                .Configure(options => ApplyPreviewOptions(options, previewOptions));
             return serviceCollection;
+        }
+
+        private static void ApplyPreviewOptions(HttpHybridCacheHandlerOptions options, HttpHybridCacheHandlerOptions previewOptions)
+        {
+            options.HeuristicFreshnessPercent = previewOptions.HeuristicFreshnessPercent;
+            options.HeuristicFreshnessMinimum = previewOptions.HeuristicFreshnessMinimum;
+            options.VaryHeaders = previewOptions.VaryHeaders;
+            options.MaxCacheableContentSize = previewOptions.MaxCacheableContentSize;
+            options.FallbackCacheDuration = previewOptions.FallbackCacheDuration;
+            options.CompressionThreshold = previewOptions.CompressionThreshold;
+            options.CompressibleContentTypes = previewOptions.CompressibleContentTypes;
+            options.CacheableContentTypes = previewOptions.CacheableContentTypes;
+            options.IncludeDiagnosticHeaders = previewOptions.IncludeDiagnosticHeaders;
         }
     }
 }

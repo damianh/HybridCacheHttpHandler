@@ -121,4 +121,29 @@ public class CachingHttpHandlerConfigurationTests
 
         HttpHybridCacheHandlerOptions.DefaultTargetedCacheControlHeaderNames[0].ShouldBe("CDN-Cache-Control");
     }
+
+    [Fact]
+    public async Task Configure_delegate_is_applied_once()
+    {
+        var configureInvocationCount = 0;
+        var mockResponse = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("response"),
+            Headers = { { "Cache-Control", "public, max-age=3600" } }
+        };
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            options =>
+            {
+                configureInvocationCount++;
+                options.MaxCacheableContentSize = 1024 * 1024;
+            });
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync(TestUrl, _ct);
+
+        configureInvocationCount.ShouldBe(1);
+    }
 }

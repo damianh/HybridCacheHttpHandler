@@ -202,7 +202,7 @@ public class ContentSizeLimitTests
             StatusCode = HttpStatusCode.OK,
             Content = new ByteArrayContent(content)
         };
-        mockResponse.Content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+        mockResponse.Content.Headers.ContentType = new MediaTypeHeaderValue("image/png");
         mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
         var mockHandler = new MockHttpMessageHandler(mockResponse);
 
