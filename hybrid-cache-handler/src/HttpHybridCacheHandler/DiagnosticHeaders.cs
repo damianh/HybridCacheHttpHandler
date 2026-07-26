@@ -75,6 +75,11 @@ public static class DiagnosticHeaders
     public const string HitFresh = "HIT-FRESH";
 
     /// <summary>
+    /// Diagnostic value indicating a cache hit answered with a locally generated 304.
+    /// </summary>
+    public const string HitNotModified = "HIT-NOT-MODIFIED";
+
+    /// <summary>
     /// Diagnostic value indicating a cache hit serving stale content during revalidation.
     /// </summary>
     public const string HitStaleWhileRevalidate = "HIT-STALE-WHILE-REVALIDATE";

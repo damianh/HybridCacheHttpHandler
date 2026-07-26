@@ -7,6 +7,7 @@ using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.IO.Compression;
 using System.Net;
+using System.Text;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -106,6 +107,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return response;
         }
 
+        NormalizeIfNoneMatchHeader(request);
+
         // Check request Cache-Control directives
         var requestCacheControl = request.Headers.CacheControl;
 
@@ -120,8 +123,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 cancellationToken: ct
             );
 
-            if (cachedEntry != null)
+            if (cachedEntry != null && MatchesStoredVaryHeaders(cachedEntry, request))
             {
+                if (TryCreateConditionalNotModifiedResponse(request, cachedEntry, out var notModifiedResponse))
+                {
+                    AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, cachedEntry);
+                    return notModifiedResponse;
+                }
+
                 var response = await DeserializeResponseAsync(cachedEntry, ct);
                 if (response != null)
                 {
@@ -249,8 +258,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
             }
 
             // From here, uncachedResponse is null, meaning we have a cache hit
+            var varyMatches = MatchesStoredVaryHeaders(cachedResponse, request);
+
             // Check if validation is required (no-cache request or no-cache response)
-            if (mustRevalidate || cachedResponse.NoCache)
+            if (!varyMatches || mustRevalidate || cachedResponse.NoCache)
             {
                 var validationRequest = CreateValidationRequest(request, cachedResponse);
                 uncachedResponse = await base.SendAsync(validationRequest, ct);
@@ -270,6 +281,12 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     }
 
                     CacheHits.Add(1, CreateMetricTags(request));
+                    if (TryCreateConditionalNotModifiedResponse(request, updatedEntry, out var notModifiedResponse))
+                    {
+                        AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, updatedEntry);
+                        return notModifiedResponse;
+                    }
+
                     var response = await DeserializeResponseAsync(updatedEntry, ct);
                     if (response == null)
                     {
@@ -294,6 +311,13 @@ public class HttpHybridCacheHandler : DelegatingHandler
             {
                 // Cache hit on fresh response
                 CacheHits.Add(1, CreateMetricTags(request));
+
+                if (TryCreateConditionalNotModifiedResponse(request, cachedResponse, out var notModifiedResponse))
+                {
+                    AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, cachedResponse);
+                    return notModifiedResponse;
+                }
+
                 var response = await DeserializeResponseAsync(cachedResponse, ct);
                 if (response == null)
                 {
@@ -319,6 +343,18 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 // Within stale-while-revalidate window?
                 if (staleness <= cachedResponse.StaleWhileRevalidate.Value)
                 {
+                    if (TryCreateConditionalNotModifiedResponse(request, cachedResponse, out var notModifiedResponse))
+                    {
+                        AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, cachedResponse);
+
+                        // Trigger background revalidation
+                        _ = Task.Run(() => BackgroundRevalidateAsync(cachedResponse, request, cacheKey2), ct);
+
+                        CacheHits.Add(1, CreateMetricTags(request)); // Count as hit (stale-while-revalidate)
+                        CacheStale.Add(1, CreateMetricTags(request));
+                        return notModifiedResponse;
+                    }
+
                     // Serve stale content immediately
                     var staleResponse = await DeserializeResponseAsync(cachedResponse, ct);
                     if (staleResponse == null)
@@ -393,6 +429,12 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 }
 
                 CacheHits.Add(1, CreateMetricTags(request)); // Count as hit (revalidated)
+                if (TryCreateConditionalNotModifiedResponse(request, updatedEntry, out var notModifiedResponse))
+                {
+                    AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, updatedEntry);
+                    return notModifiedResponse;
+                }
+
                 // Return cached body with updated metadata
                 var response = await DeserializeResponseAsync(updatedEntry, ct);
                 if (response == null)
@@ -597,12 +639,18 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var request = new HttpRequestMessage(originalRequest.Method, originalRequest.RequestUri);
         foreach (var header in originalRequest.Headers)
         {
+            if (header.Key.Equals("If-None-Match", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("If-Modified-Since", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             request.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
         if (!string.IsNullOrEmpty(cachedResponse.ETag))
         {
-            request.Headers.IfNoneMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue(cachedResponse.ETag));
+            request.Headers.TryAddWithoutValidation("If-None-Match", NormalizeETagForSending(cachedResponse.ETag));
         }
         else if (cachedResponse.LastModified.HasValue)
         {
@@ -624,7 +672,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         {
             if (request.Headers.TryGetValues(h, out var values))
             {
-                var normalized = string.Join(",", values.Select(v => v.Trim().Replace(" ", "")));
+                var normalized = NormalizeHeaderValues(values);
                 varyParts.Add($"{h}:{normalized}");
             }
             else
@@ -635,6 +683,256 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         var varyKeyPart = string.Join("|", varyParts);
         return $"{baseCacheKey}::{varyKeyPart}";
+    }
+
+    private static void NormalizeIfNoneMatchHeader(HttpRequestMessage request)
+    {
+        if (!request.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues))
+        {
+            return;
+        }
+
+        var normalized = ifNoneMatchValues
+            .SelectMany(SplitETagList)
+            .Select(NormalizeETagForSending)
+            .Where(static value => !string.IsNullOrEmpty(value))
+            .ToArray();
+
+        if (normalized.Length == 0)
+        {
+            return;
+        }
+
+        request.Headers.Remove("If-None-Match");
+        request.Headers.TryAddWithoutValidation("If-None-Match", string.Join(", ", normalized));
+    }
+
+    private bool MatchesStoredVaryHeaders(CachedHttpMetadata cachedResponse, HttpRequestMessage request)
+    {
+        if (cachedResponse.VaryHeaders is not { Length: > 0 })
+        {
+            return true;
+        }
+
+        if (cachedResponse.VaryHeaderValues is null)
+        {
+            return false;
+        }
+
+        foreach (var varyHeader in cachedResponse.VaryHeaders)
+        {
+            var requestValue = GetNormalizedHeaderValue(request, varyHeader);
+            cachedResponse.VaryHeaderValues.TryGetValue(varyHeader, out var cachedValue);
+            if (!string.Equals(cachedValue ?? string.Empty, requestValue, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string GetNormalizedHeaderValue(HttpRequestMessage request, string headerName)
+        => request.Headers.TryGetValues(headerName, out var values)
+            ? NormalizeHeaderValues(values)
+            : string.Empty;
+
+    private static string NormalizeHeaderValues(IEnumerable<string> values)
+        => string.Join(",", values.Select(v => v.Trim().Replace(" ", "", StringComparison.Ordinal)));
+
+    private bool TryCreateConditionalNotModifiedResponse(
+        HttpRequestMessage request,
+        CachedHttpMetadata cachedResponse,
+        out HttpResponseMessage response)
+    {
+        if (!EvaluateClientConditional(request, cachedResponse))
+        {
+            response = null!;
+            return false;
+        }
+
+        response = CreateNotModifiedResponse(request, cachedResponse);
+        return true;
+    }
+
+    private static bool EvaluateClientConditional(HttpRequestMessage request, CachedHttpMetadata cachedResponse)
+    {
+        if (request.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues))
+        {
+            var storedEtag = cachedResponse.ETag;
+            foreach (var candidate in ifNoneMatchValues.SelectMany(SplitETagList))
+            {
+                if (candidate == "*")
+                {
+                    return true;
+                }
+
+                if (string.IsNullOrEmpty(storedEtag))
+                {
+                    continue;
+                }
+
+                if (WeakEntityTagEquals(candidate, storedEtag))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if (!request.Headers.TryGetValues("If-Modified-Since", out var ifModifiedSinceValues))
+        {
+            return false;
+        }
+
+        var ifModifiedSince = ifModifiedSinceValues.FirstOrDefault();
+        if (!TryParseHttpDate(ifModifiedSince, out var ifModifiedSinceDate))
+        {
+            return false;
+        }
+
+        if (!cachedResponse.LastModified.HasValue)
+        {
+            return true;
+        }
+
+        return cachedResponse.LastModified.Value <= ifModifiedSinceDate;
+    }
+
+    private static HttpResponseMessage CreateNotModifiedResponse(HttpRequestMessage request, CachedHttpMetadata cachedResponse)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.NotModified)
+        {
+            RequestMessage = request,
+            Content = new ByteArrayContent([])
+        };
+
+        foreach (var header in cachedResponse.Headers)
+        {
+            response.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        foreach (var header in cachedResponse.ContentHeaders)
+        {
+            if (header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        response.Content.Headers.Remove("Content-Length");
+        return response;
+    }
+
+    private static bool TryParseHttpDate(string? value, out DateTimeOffset parsed)
+        => DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out parsed);
+
+    private static bool WeakEntityTagEquals(string left, string right)
+        => string.Equals(
+            NormalizeETagForComparison(left),
+            NormalizeETagForComparison(right),
+            StringComparison.Ordinal);
+
+    private static string NormalizeETagForComparison(string value)
+    {
+        var normalized = value.Trim();
+        if (normalized.Length == 0)
+        {
+            return normalized;
+        }
+
+        if (normalized.Length >= 2 &&
+            (normalized[0] == 'W' || normalized[0] == 'w'))
+        {
+            if (normalized[1] == '/' || normalized[1] == '\\')
+            {
+                normalized = normalized[2..];
+            }
+            else if (normalized[1] == '"')
+            {
+                normalized = normalized[1..];
+            }
+        }
+
+        normalized = normalized.Trim();
+        if (normalized.Length >= 2 &&
+            normalized[0] == '"' &&
+            normalized[^1] == '"')
+        {
+            normalized = normalized[1..^1];
+        }
+
+        return normalized;
+    }
+
+    private static string NormalizeETagForSending(string value)
+    {
+        var normalized = value.Trim();
+        if (normalized.Length == 0 || normalized == "*")
+        {
+            return normalized;
+        }
+
+        if ((normalized[0] == 'W' || normalized[0] == 'w') && normalized.Length >= 2)
+        {
+            if (normalized[1] == '/' || normalized[1] == '\\' || normalized[1] == '"')
+            {
+                return normalized;
+            }
+        }
+
+        if (normalized.Length >= 2 &&
+            normalized[0] == '"' &&
+            normalized[^1] == '"')
+        {
+            return normalized;
+        }
+
+        return $"\"{normalized}\"";
+    }
+
+    private static IEnumerable<string> SplitETagList(string value)
+    {
+        var builder = new StringBuilder();
+        var inQuotes = false;
+        var previous = '\0';
+
+        foreach (var character in value)
+        {
+            if (character == '"' && previous != '\\')
+            {
+                inQuotes = !inQuotes;
+            }
+
+            if (character == ',' && !inQuotes)
+            {
+                var etag = builder.ToString().Trim();
+                if (etag.Length > 0)
+                {
+                    yield return etag;
+                }
+
+                builder.Clear();
+                previous = character;
+                continue;
+            }
+
+            builder.Append(character);
+            previous = character;
+        }
+
+        var final = builder.ToString().Trim();
+        if (final.Length > 0)
+        {
+            yield return final;
+        }
     }
 
     private async Task InvalidateCachedResponsesForUnsafeMethodAsync(
@@ -1121,7 +1419,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         // Extract ETag
-        var etag = response.Headers.ETag?.Tag;
+        string? etag = null;
+        if (response.Headers.TryGetValues("ETag", out var etagValues))
+        {
+            etag = etagValues.FirstOrDefault();
+        }
 
         // Extract Last-Modified
         var lastModified = response.Content.Headers.LastModified;
@@ -1172,7 +1474,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     if (request.Headers.TryGetValues(varyHeader, out var requestHeaderValues))
                     {
                         // Normalize: join multiple values and trim whitespace
-                        var normalizedValue = string.Join(",", requestHeaderValues.Select(v => v.Trim()));
+                        var normalizedValue = NormalizeHeaderValues(requestHeaderValues);
                         varyHeaderValues[varyHeader] = normalizedValue;
                     }
                     else

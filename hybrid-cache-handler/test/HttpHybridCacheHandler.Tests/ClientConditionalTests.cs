@@ -1,0 +1,312 @@
+// Copyright (c) Damian Hickey. All rights reserved.
+// See LICENSE in the project root for license information.
+
+using System.Globalization;
+using System.Net;
+using System.Net.Http.Headers;
+
+namespace DamianH.HttpHybridCacheHandler;
+
+public class ClientConditionalTests
+{
+    private readonly Ct _ct = TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task Fresh_cached_ETag_match_returns_304()
+    {
+        var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached", response =>
+        {
+            response.Headers.ETag = new EntityTagHeaderValue("\"abcdef\"");
+        }));
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-None-Match", "\"abcdef\"");
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        response.Headers.TryGetValues("ETag", out var etagValues).ShouldBeTrue();
+        etagValues.ShouldContain("\"abcdef\"");
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task If_None_Match_takes_precedence_over_If_Modified_Since()
+    {
+        var lastModified = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached", response =>
+        {
+            response.Headers.ETag = new EntityTagHeaderValue("\"abcdef\"");
+            response.Content.Headers.LastModified = lastModified;
+        }));
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-None-Match", "\"abcdef\"");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", lastModified.AddMinutes(-10).ToString("R", CultureInfo.InvariantCulture));
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Fresh_cached_unquoted_ETag_matches_quoted_If_None_Match()
+    {
+        var originResponse = CreateCacheableResponse("cached");
+        originResponse.Headers.TryAddWithoutValidation("ETag", "abcdef");
+        var mockHandler = new MockHttpMessageHandler(originResponse);
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-None-Match", "\"abcdef\"");
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Fresh_cached_response_without_Last_Modified_returns_304_for_If_Modified_Since()
+    {
+        var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached"));
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", DateTimeOffset.UtcNow.AddMinutes(-10).ToString("R", CultureInfo.InvariantCulture));
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RFC850_If_Modified_Since_is_honored()
+    {
+        var lastModified = new DateTimeOffset(2024, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached", response =>
+        {
+            response.Content.Headers.LastModified = lastModified;
+        }));
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", lastModified.ToString("dddd, dd-MMM-yy HH':'mm':'ss 'GMT'", CultureInfo.InvariantCulture));
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Bare_If_None_Match_is_quoted_when_forwarded()
+    {
+        HttpRequestMessage? lastRequest = null;
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            lastRequest = request;
+            return Task.FromResult(CreateCacheableResponse("origin"));
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request.Headers.TryAddWithoutValidation("If-None-Match", "abcdef");
+
+        _ = await client.SendAsync(request, _ct);
+
+        lastRequest.ShouldNotBeNull();
+        lastRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldBe(["\"abcdef\""]);
+    }
+
+    [Fact]
+    public async Task Weak_ETag_is_preserved_in_validation_request()
+    {
+        HttpRequestMessage? validationRequest = null;
+        var requestCount = 0;
+        var originResponse = CreateCacheableResponse("cached", response =>
+        {
+            response.Headers.TryAddWithoutValidation("ETag", "W/\"abcdef\"");
+            response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+        });
+
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                return Task.FromResult(originResponse);
+            }
+
+            validationRequest = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        _ = await client.GetAsync("https://example.com/resource", _ct);
+
+        validationRequest.ShouldNotBeNull();
+        validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldBe(["W/\"abcdef\""]);
+    }
+
+    [Fact]
+    public async Task Unquoted_stored_ETag_is_quoted_in_validation_request()
+    {
+        HttpRequestMessage? validationRequest = null;
+        var requestCount = 0;
+        var originResponse = CreateCacheableResponse("cached", response =>
+        {
+            response.Headers.TryAddWithoutValidation("ETag", "abcdef");
+            response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+        });
+
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                return Task.FromResult(originResponse);
+            }
+
+            validationRequest = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        _ = await client.GetAsync("https://example.com/resource", _ct);
+
+        validationRequest.ShouldNotBeNull();
+        validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldBe(["\"abcdef\""]);
+    }
+
+    [Fact]
+    public async Task Client_If_Modified_Since_returns_304_after_origin_304_revalidation()
+    {
+        HttpRequestMessage? validationRequest = null;
+        var requestCount = 0;
+        var lastModified = DateTimeOffset.UtcNow.AddDays(-1);
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                return Task.FromResult(CreateCacheableResponse("cached", response =>
+                {
+                    response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                    response.Content.Headers.LastModified = lastModified;
+                }));
+            }
+
+            validationRequest = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", lastModified.ToString("R", CultureInfo.InvariantCulture));
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        validationRequest.ShouldNotBeNull();
+        validationRequest.Headers.TryGetValues("If-Modified-Since", out var ifModifiedSinceValues).ShouldBeTrue();
+        ifModifiedSinceValues.Count().ShouldBe(1);
+        ifModifiedSinceValues.Single().ShouldBe(lastModified.ToString("R", CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task Fresh_Vary_mismatch_revalidates_with_stored_ETag()
+    {
+        HttpRequestMessage? validationRequest = null;
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                return Task.FromResult(CreateCacheableResponse("variant-1", response =>
+                {
+                    response.Headers.ETag = new EntityTagHeaderValue("\"abcdef\"");
+                    response.Headers.TryAddWithoutValidation("Vary", "Abc");
+                }));
+            }
+
+            validationRequest = request;
+            return Task.FromResult(CreateCacheableResponse("variant-2"));
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var firstRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        firstRequest.Headers.TryAddWithoutValidation("Abc", "123");
+        _ = await client.SendAsync(firstRequest, _ct);
+
+        var secondRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        secondRequest.Headers.TryAddWithoutValidation("Abc", "456");
+        _ = await client.SendAsync(secondRequest, _ct);
+
+        requestCount.ShouldBe(2);
+        validationRequest.ShouldNotBeNull();
+        validationRequest.Headers.TryGetValues("Abc", out var abcValues).ShouldBeTrue();
+        abcValues.ShouldBe(["456"]);
+        validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldBe(["\"abcdef\""]);
+    }
+
+    private static HttpResponseMessage CreateCacheableResponse(string body, Action<HttpResponseMessage>? configure = null)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body)
+        };
+
+        response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+        configure?.Invoke(response);
+        return response;
+    }
+}
