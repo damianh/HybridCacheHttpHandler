@@ -3,6 +3,17 @@
 
 namespace DamianH.HttpHybridCacheHandler;
 
+internal sealed class CachedHttpEntry
+{
+    private List<CachedHttpMetadata>? _variants;
+
+    public List<CachedHttpMetadata> Variants
+    {
+        get => _variants ??= [];
+        init => _variants = value;
+    }
+}
+
 /// <summary>
 /// Cached HTTP response metadata without the content body.
 /// Content is stored separately to avoid Base64 encoding overhead in distributed cache.

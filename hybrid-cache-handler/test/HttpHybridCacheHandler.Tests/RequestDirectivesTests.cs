@@ -2,6 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using System.Net;
+using Microsoft.Extensions.Caching.Hybrid;
 
 namespace DamianH.HttpHybridCacheHandler;
 
@@ -242,6 +243,153 @@ public class RequestDirectivesTests
     }
 
     [Fact]
+    public async Task Only_if_cached_with_missing_variant_body_removes_orphaned_variant()
+    {
+        var cache = new InspectableHybridCache();
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            var foo = request.Headers.TryGetValues("Foo", out var values)
+                ? string.Join(string.Empty, values)
+                : "missing";
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($"response_{foo}")
+            };
+            response.Headers.Add("Cache-Control", "max-age=3600");
+            response.Headers.Add("Vary", "Foo");
+            return Task.FromResult(response);
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler, customCache: cache);
+        using var client = fixture.CreateClient();
+
+        var shortRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        shortRequest.Headers.Add("Foo", "short");
+        await client.SendAsync(shortRequest, _ct);
+
+        var longRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        longRequest.Headers.Add("Foo", "long");
+        await client.SendAsync(longRequest, _ct);
+
+        cache.RemoveContentForVariant(v =>
+            v.VaryHeaderValues != null
+            && v.VaryHeaderValues.TryGetValue("Foo", out var value)
+            && value == "short").ShouldBeTrue();
+
+        var shortOnlyIfCached = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        shortOnlyIfCached.Headers.Add("Foo", "short");
+        shortOnlyIfCached.Headers.Add("Cache-Control", "only-if-cached");
+        var shortResponse = await client.SendAsync(shortOnlyIfCached, _ct);
+
+        shortResponse.StatusCode.ShouldBe(HttpStatusCode.GatewayTimeout);
+        mockHandler.RequestCount.ShouldBe(2);
+
+        var metadataEntry = cache.GetMetadataEntry();
+        metadataEntry.ShouldNotBeNull();
+        metadataEntry.Variants.Count.ShouldBe(1);
+        metadataEntry.Variants[0].VaryHeaderValues?["Foo"].ShouldBe("long");
+
+        var longOnlyIfCached = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        longOnlyIfCached.Headers.Add("Foo", "long");
+        longOnlyIfCached.Headers.Add("Cache-Control", "only-if-cached");
+        var longResponse = await client.SendAsync(longOnlyIfCached, _ct);
+
+        longResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await longResponse.Content.ReadAsStringAsync(_ct)).ShouldBe("response_long");
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Only_if_cached_returns_504_when_matching_variant_is_past_effective_lifetime()
+    {
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            var foo = request.Headers.TryGetValues("Foo", out var values)
+                ? string.Join(string.Empty, values)
+                : "missing";
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($"response_{foo}")
+            };
+            response.Headers.Add("Cache-Control", foo == "short" ? "max-age=1" : "max-age=3600");
+            response.Headers.Add("Vary", "Foo");
+            return Task.FromResult(response);
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        var shortRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        shortRequest.Headers.Add("Foo", "short");
+        await client.SendAsync(shortRequest, _ct);
+
+        var longRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        longRequest.Headers.Add("Foo", "long");
+        await client.SendAsync(longRequest, _ct);
+
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var staleOnlyIfCached = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        staleOnlyIfCached.Headers.Add("Foo", "short");
+        staleOnlyIfCached.Headers.Add("Cache-Control", "only-if-cached");
+        var staleResponse = await client.SendAsync(staleOnlyIfCached, _ct);
+
+        staleResponse.StatusCode.ShouldBe(HttpStatusCode.GatewayTimeout);
+        mockHandler.RequestCount.ShouldBe(2);
+
+        var freshOnlyIfCached = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        freshOnlyIfCached.Headers.Add("Foo", "long");
+        freshOnlyIfCached.Headers.Add("Cache-Control", "only-if-cached");
+        var freshResponse = await client.SendAsync(freshOnlyIfCached, _ct);
+
+        freshResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await freshResponse.Content.ReadAsStringAsync(_ct)).ShouldBe("response_long");
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Only_if_cached_falls_back_to_usable_Accept_Language_variant()
+    {
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            var acceptLanguage = request.Headers.TryGetValues("Accept-Language", out var values)
+                ? string.Join(string.Empty, values)
+                : string.Empty;
+
+            var isEnglishVariant = acceptLanguage == "en-US";
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(isEnglishVariant ? "response_en" : "response_fr")
+            };
+            response.Headers.Add("Cache-Control", isEnglishVariant ? "max-age=1" : "max-age=3600");
+            response.Headers.Add("Vary", "Accept-Language");
+            response.Content.Headers.Add("Content-Language", isEnglishVariant ? "en" : "fr");
+            return Task.FromResult(response);
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        var englishRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        englishRequest.Headers.Add("Accept-Language", "en-US");
+        await client.SendAsync(englishRequest, _ct);
+
+        var frenchRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        frenchRequest.Headers.Add("Accept-Language", "fr-FR");
+        await client.SendAsync(frenchRequest, _ct);
+
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var onlyIfCachedRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        onlyIfCachedRequest.Headers.Add("Accept-Language", "en, fr;q=0.9");
+        onlyIfCachedRequest.Headers.Add("Cache-Control", "only-if-cached");
+        var onlyIfCachedResponse = await client.SendAsync(onlyIfCachedRequest, _ct);
+
+        onlyIfCachedResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await onlyIfCachedResponse.Content.ReadAsStringAsync(_ct)).ShouldBe("response_fr");
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Only_if_cached_returns_504_if_not_in_cache()
     {
         var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
@@ -260,5 +408,53 @@ public class RequestDirectivesTests
 
         response.StatusCode.ShouldBe(HttpStatusCode.GatewayTimeout); // 504
         mockHandler.RequestCount.ShouldBe(0); // No request to origin
+    }
+    [Fact]
+    public async Task Only_if_cached_returns_504_when_cache_read_fails()
+    {
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("response"),
+            Headers = { { "Cache-Control", "max-age=3600" } }
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            customCache: new ThrowOnGetCache());
+        using var client = fixture.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request.Headers.Add("Cache-Control", "only-if-cached");
+        var response = await client.SendAsync(request, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.GatewayTimeout);
+        mockHandler.RequestCount.ShouldBe(0);
+    }
+
+    private sealed class ThrowOnGetCache : HybridCache
+    {
+        public override ValueTask<T> GetOrCreateAsync<TState, T>(
+            string key,
+            TState state,
+            Func<TState, Ct, ValueTask<T>> factory,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default) =>
+            throw new InvalidOperationException("Simulated cache read failure");
+
+        public override ValueTask SetAsync<T>(
+            string key,
+            T value,
+            HybridCacheEntryOptions? options = null,
+            IEnumerable<string>? tags = null,
+            Ct cancellationToken = default) => ValueTask.CompletedTask;
+
+        public override ValueTask RemoveAsync(string key, Ct cancellationToken = default) => ValueTask.CompletedTask;
+
+        public override ValueTask RemoveAsync(IEnumerable<string> keys, Ct cancellationToken = default) => ValueTask.CompletedTask;
+
+        public override ValueTask RemoveByTagAsync(string tag, Ct cancellationToken = default) => ValueTask.CompletedTask;
+
+        public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default) => ValueTask.CompletedTask;
     }
 }
