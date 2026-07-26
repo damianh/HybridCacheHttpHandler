@@ -155,6 +155,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         var cacheKey2 = GenerateVaryAwareCacheKey(request);
         HttpResponseMessage? uncachedResponse = null;
+        RawHeaderSnapshot? uncachedRawHeaders = null;
 
         CachedHttpMetadata? cachedResponse;
         try
@@ -164,6 +165,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 async cancel =>
                 {
                     uncachedResponse = await base.SendAsync(request, cancel);
+
+                    // Snapshot raw headers before any typed header access parses
+                    // (and normalizes) them, so responses replay/pass through verbatim.
+                    var rawHeaders = uncachedRawHeaders = CaptureRawHeaders(uncachedResponse);
 
                     // Don't cache if request had no-store
                     if (request.Headers.CacheControl?.NoStore == true)
@@ -202,7 +207,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         return null;
                     }
 
-                    return await SerializeResponse(uncachedResponse, request);
+                    return await SerializeResponse(uncachedResponse, rawHeaders, request);
                 },
                 cancellationToken: ct
             );
@@ -212,6 +217,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             // Cache read/write failure - fall back to origin
             _logger.CacheOperationFailed(request.RequestUri, ex);
             uncachedResponse ??= await base.SendAsync(request, ct);
+            RestoreRawHeaders(uncachedResponse, uncachedRawHeaders);
             AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
             CacheMisses.Add(1, CreateMetricTags(request));
             return uncachedResponse;
@@ -233,6 +239,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 {
                     _logger.CacheWriteFailed(request.RequestUri, ex);
                 }
+                RestoreRawHeaders(uncachedResponse, uncachedRawHeaders);
                 AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.Miss);
                 CacheMisses.Add(1, CreateMetricTags(request));
                 return uncachedResponse;
@@ -244,6 +251,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             {
                 var validationRequest = CreateValidationRequest(request, cachedResponse);
                 uncachedResponse = await base.SendAsync(validationRequest, ct);
+                var validationRawHeaders = CaptureRawHeaders(uncachedResponse);
 
                 // Handle 304 Not Modified
                 if (uncachedResponse.StatusCode == HttpStatusCode.NotModified)
@@ -263,6 +271,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     if (response == null)
                     {
                         // Content missing, return fresh response
+                        RestoreRawHeaders(uncachedResponse, validationRawHeaders);
                         AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
                         return uncachedResponse;
                     }
@@ -272,6 +281,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
                 // Got a new response, cache it
                 CacheMisses.Add(1, CreateMetricTags(request));
+                RestoreRawHeaders(uncachedResponse, validationRawHeaders);
                 AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissRevalidated);
                 return uncachedResponse;
             }
@@ -331,6 +341,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
             uncachedResponse = await base.SendAsync(staleValidationRequest, ct);
 
+            // Snapshot raw headers before typed access normalizes them
+            var staleValidationRawHeaders = CaptureRawHeaders(uncachedResponse);
+
             // Check for stale-if-error
             if ((int)uncachedResponse.StatusCode >= 500 &&
                 cachedResponse is { StaleIfError: not null, MustRevalidate: false })
@@ -348,6 +361,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     if (response == null)
                     {
                         // Content missing - return error response
+                        RestoreRawHeaders(uncachedResponse, staleValidationRawHeaders);
                         AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
                         return uncachedResponse;
                     }
@@ -377,6 +391,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 if (response == null)
                 {
                     // Content missing - return fresh response
+                    RestoreRawHeaders(uncachedResponse, staleValidationRawHeaders);
                     AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
                     return uncachedResponse;
                 }
@@ -387,7 +402,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             // Resource changed (200 or other status) - update cache if cacheable
             if (IsResponseCacheable(uncachedResponse, staleValidationRequest))
             {
-                var freshResponse = await SerializeResponse(uncachedResponse, staleValidationRequest);
+                var freshResponse = await SerializeResponse(uncachedResponse, staleValidationRawHeaders, staleValidationRequest);
                 if (freshResponse != null)
                 {
                     try
@@ -419,6 +434,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 }
             }
 
+            RestoreRawHeaders(uncachedResponse, staleValidationRawHeaders);
             AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissRevalidated);
             return uncachedResponse;
         }
@@ -431,6 +447,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
         {
             // This shouldn't happen, but safety fallback
             uncachedResponse = await base.SendAsync(request, ct);
+        }
+        else
+        {
+            RestoreRawHeaders(uncachedResponse, uncachedRawHeaders);
         }
 
         AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.Miss);
@@ -492,6 +512,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
             revalidationRequest = CreateValidationRequest(originalRequest, cachedResponse);
             var revalidatedResponse = await base.SendAsync(revalidationRequest, Ct.None);
 
+            // Snapshot raw headers before typed access normalizes them
+            var revalidatedRawHeaders = CaptureRawHeaders(revalidatedResponse);
+
             if (revalidatedResponse.StatusCode == HttpStatusCode.NotModified)
             {
                 var updatedEntry = UpdateCachedEntry(cachedResponse, revalidatedResponse);
@@ -509,7 +532,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             {
                 if (IsResponseCacheable(revalidatedResponse, revalidationRequest))
                 {
-                    var freshResponse = await SerializeResponse(revalidatedResponse, revalidationRequest);
+                    var freshResponse = await SerializeResponse(revalidatedResponse, revalidatedRawHeaders, revalidationRequest);
                     if (freshResponse != null)
                     {
                         try
@@ -816,7 +839,59 @@ public class HttpHybridCacheHandler : DelegatingHandler
         return false;
     }
 
-    private async Task<CachedHttpMetadata?> SerializeResponse(HttpResponseMessage response, HttpRequestMessage? request = null)
+    /// <summary>
+    /// Snapshots raw (unparsed) header values. Must be called immediately after a
+    /// response is received, before any typed header access (e.g. Headers.CacheControl)
+    /// parses the raw values — parsed values re-serialize reordered/case-normalized,
+    /// and RFC 9111 requires stored header field values to be replayed unchanged.
+    /// </summary>
+    private static RawHeaderSnapshot CaptureRawHeaders(HttpResponseMessage response)
+    {
+        var headers = new Dictionary<string, string[]>();
+        foreach (var header in response.Headers.NonValidated)
+        {
+            headers[header.Key] = header.Value.ToArray();
+        }
+
+        var contentHeaders = new Dictionary<string, string[]>();
+        foreach (var header in response.Content.Headers.NonValidated)
+        {
+            contentHeaders[header.Key] = header.Value.ToArray();
+        }
+
+        return new RawHeaderSnapshot(headers, contentHeaders);
+    }
+
+    private sealed record RawHeaderSnapshot(
+        Dictionary<string, string[]> Headers,
+        Dictionary<string, string[]> ContentHeaders);
+
+    /// <summary>
+    /// Restores raw header values captured by <see cref="CaptureRawHeaders"/> onto a
+    /// response whose headers may have been parsed (and thus re-serialized normalized)
+    /// by typed header access, so the response is passed through verbatim.
+    /// </summary>
+    private static void RestoreRawHeaders(HttpResponseMessage response, RawHeaderSnapshot? rawHeaders)
+    {
+        if (rawHeaders == null)
+        {
+            return;
+        }
+
+        response.Headers.Clear();
+        foreach (var header in rawHeaders.Headers)
+        {
+            response.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        response.Content.Headers.Clear();
+        foreach (var header in rawHeaders.ContentHeaders)
+        {
+            response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+    }
+
+    private async Task<CachedHttpMetadata?> SerializeResponse(HttpResponseMessage response, RawHeaderSnapshot rawHeaders, HttpRequestMessage? request = null)
     {
         // Check content length before reading if available
         if (response.Content.Headers.ContentLength.HasValue &&
@@ -829,11 +904,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return null;
         }
 
-        // Capture original content headers before reading
-        var originalContentHeaders = response.Content.Headers.ToDictionary(
-            h => h.Key,
-            h => h.Value.ToArray()
-        );
+        // Raw content headers, captured before reading/replacing the content
+        var originalContentHeaders = rawHeaders.ContentHeaders;
 
         // Use SegmentedBuffer to avoid LOH allocations for large responses
         var stream = await response.Content.ReadAsStreamAsync();
@@ -885,10 +957,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             isCompressed = true;
         }
 
-        var headers = response.Headers.ToDictionary(
-            h => h.Key,
-            h => h.Value.ToArray()
-        );
+        var headers = rawHeaders.Headers;
 
         var contentHeaders = originalContentHeaders;
 
