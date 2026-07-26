@@ -460,7 +460,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     AddDiagnosticHeaders(staleResponse, DiagnosticHeaders.HitStaleWhileRevalidate, cachedResponse);
 
                     // Trigger background revalidation
-                    _ = Task.Run(() => BackgroundRevalidateAsync(cachedEntry, cachedResponse, request, cacheKey2), ct);
+                    _ = Task.Run(() => BackgroundRevalidateAsync(cachedEntry, cachedResponse, request, cacheKey2));
 
                     CacheHits.Add(1, CreateMetricTags(request)); // Count as hit (stale-while-revalidate)
                     CacheStale.Add(1, CreateMetricTags(request));
