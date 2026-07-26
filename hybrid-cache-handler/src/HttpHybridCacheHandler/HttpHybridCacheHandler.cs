@@ -532,18 +532,6 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 if (!hasRangeRequest && cachedResponse.IsPartial)
                 {
                     // A full GET cannot be satisfied from a stored partial response.
-                    // If we can infer the missing tail, request only the missing range.
-                    if (TryCreateCompletionRangeRequest(request, cachedResponse, out var completionRangeRequest))
-                    {
-                        using (completionRangeRequest)
-                        {
-                            var completionRangeResponse = await base.SendAsync(completionRangeRequest, ct);
-                            AddDiagnosticHeaders(completionRangeResponse, DiagnosticHeaders.Miss);
-                            CacheMisses.Add(1, CreateMetricTags(request));
-                            return completionRangeResponse;
-                        }
-                    }
-
                     var partialBypassResponse = await base.SendAsync(request, ct);
                     AddDiagnosticHeaders(partialBypassResponse, DiagnosticHeaders.Miss);
                     CacheMisses.Add(1, CreateMetricTags(request));
@@ -977,37 +965,6 @@ public class HttpHybridCacheHandler : DelegatingHandler
         return request;
     }
 
-    private static bool TryCreateCompletionRangeRequest(
-        HttpRequestMessage originalRequest,
-        CachedHttpMetadata cachedResponse,
-        out HttpRequestMessage rangeRequest)
-    {
-        rangeRequest = null!;
-
-        if (!cachedResponse.IsPartial ||
-            !cachedResponse.RangeStart.HasValue ||
-            !cachedResponse.RangeEnd.HasValue ||
-            !cachedResponse.RangeTotalLength.HasValue)
-        {
-            return false;
-        }
-
-        if (cachedResponse.RangeStart.Value != 0 ||
-            cachedResponse.RangeEnd.Value >= cachedResponse.RangeTotalLength.Value - 1)
-        {
-            return false;
-        }
-
-        rangeRequest = new HttpRequestMessage(originalRequest.Method, originalRequest.RequestUri);
-        foreach (var header in originalRequest.Headers)
-        {
-            rangeRequest.Headers.TryAddWithoutValidation(header.Key, header.Value);
-        }
-
-        rangeRequest.Headers.Range = new RangeHeaderValue(cachedResponse.RangeEnd.Value + 1, null);
-        return true;
-    }
-
     private async Task<HttpResponseMessage> SendHeadAndUpdateCachedGetAsync(HttpRequestMessage request, Ct ct)
     {
         var headResponse = await base.SendAsync(request, ct);
@@ -1074,6 +1031,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             ReasonPhrase = originHeadResponse.ReasonPhrase,
             Content = new ByteArrayContent([])
         };
+        merged.Content.Headers.ContentLength = null;
 
         foreach (var header in updatedCachedResponse.Headers)
         {
@@ -1965,7 +1923,6 @@ public class HttpHybridCacheHandler : DelegatingHandler
             proxyRevalidate = targeted.ProxyRevalidate ?? proxyRevalidate;
             maxAge = targeted.MaxAge;
             hasSharedMaxAge = targeted.MaxAge.HasValue;
-            qualifiedNoCacheHeaderNames = [];
             ignoreStoredAge = targeted.MaxAge.HasValue;
         }
 
