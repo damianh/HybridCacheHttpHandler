@@ -229,7 +229,7 @@ internal static class VaryMatcher
 
         foreach (var c in candidate)
         {
-            if (!char.IsLetterOrDigit(c) &&
+            if (!char.IsAsciiLetterOrDigit(c) &&
                 c != '!' &&
                 c != '#' &&
                 c != '$' &&

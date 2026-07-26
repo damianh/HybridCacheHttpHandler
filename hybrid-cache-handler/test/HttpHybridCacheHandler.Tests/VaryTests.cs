@@ -538,7 +538,7 @@ public class VaryTests
             Headers = new Dictionary<string, string[]>(),
             ContentHeaders = new Dictionary<string, string[]>(),
             CachedAt = DateTimeOffset.UnixEpoch,
-            VaryHeaders = [null!, " ", "*", "Foo Bar", " Foo "],
+            VaryHeaders = [null!, " ", "*", "Foo Bar", " Foo ", "Føø"],
             VaryHeaderValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["Foo"] = "1"
@@ -619,6 +619,48 @@ public class VaryTests
         await client.SendAsync(request2, _ct);
 
         mockHandler.RequestCount.ShouldBe(1); // Should match despite whitespace differences
+    }
+
+    [Fact]
+    public async Task Configured_vary_header_preserves_significant_spaces_in_values()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            var headerValue = request.Headers.TryGetValues("X-Custom-Header", out var values)
+                ? values.Single()
+                : "missing";
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($"response_{requestCount}_{headerValue}"),
+                Headers = { { "Cache-Control", "max-age=3600" } }
+            });
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler, options =>
+        {
+            options.VaryHeaders = ["X-Custom-Header"];
+        });
+        using var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.TryAddWithoutValidation("X-Custom-Header", "a b");
+        var response1 = await client.SendAsync(request1, _ct);
+        (await response1.Content.ReadAsStringAsync(_ct)).ShouldBe("response_1_a b");
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.TryAddWithoutValidation("X-Custom-Header", "ab");
+        var response2 = await client.SendAsync(request2, _ct);
+        (await response2.Content.ReadAsStringAsync(_ct)).ShouldBe("response_2_ab");
+
+        var request3 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request3.Headers.TryAddWithoutValidation("X-Custom-Header", "a b");
+        var response3 = await client.SendAsync(request3, _ct);
+        (await response3.Content.ReadAsStringAsync(_ct)).ShouldBe("response_1_a b");
+
+        requestCount.ShouldBe(2);
     }
 
     [Fact]
@@ -815,7 +857,7 @@ public class VaryTests
     public void BuildVariantSignature_returns_no_vary_when_only_invalid_headers_are_present()
     {
         var signature = VaryMatcher.BuildVariantSignature(
-            [null!, " ", "*", "Foo Bar"],
+            [null!, " ", "*", "Foo Bar", "Føø"],
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["Foo"] = "1"
