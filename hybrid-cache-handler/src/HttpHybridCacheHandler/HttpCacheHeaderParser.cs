@@ -133,7 +133,7 @@ internal static class HttpCacheHeaderParser
             firstMember = firstMember[..semicolonIndex].Trim();
         }
 
-        if (firstMember.Length == 0 || !firstMember.All(char.IsDigit))
+        if (firstMember.Length == 0 || !firstMember.All(char.IsAsciiDigit))
         {
             return null;
         }
@@ -225,7 +225,7 @@ internal static class HttpCacheHeaderParser
         var digitStart = -1;
         for (var i = 0; i < candidate.Length; i++)
         {
-            if (char.IsDigit(candidate[i]))
+            if (char.IsAsciiDigit(candidate[i]))
             {
                 digitStart = i;
                 break;
@@ -238,7 +238,7 @@ internal static class HttpCacheHeaderParser
         }
 
         var digitEnd = digitStart;
-        while (digitEnd < candidate.Length && char.IsDigit(candidate[digitEnd]))
+        while (digitEnd < candidate.Length && char.IsAsciiDigit(candidate[digitEnd]))
         {
             digitEnd++;
         }
@@ -385,7 +385,7 @@ internal static class HttpCacheHeaderParser
         }
 
         var daySpan = value.AsSpan(8, 2);
-        if ((daySpan[0] != ' ' && !char.IsDigit(daySpan[0])) || !char.IsDigit(daySpan[1]))
+        if ((daySpan[0] != ' ' && !char.IsAsciiDigit(daySpan[0])) || !char.IsAsciiDigit(daySpan[1]))
         {
             return false;
         }
@@ -426,7 +426,7 @@ internal static class HttpCacheHeaderParser
         value = 0;
         foreach (var ch in text)
         {
-            if (!char.IsDigit(ch))
+            if (!char.IsAsciiDigit(ch))
             {
                 return false;
             }

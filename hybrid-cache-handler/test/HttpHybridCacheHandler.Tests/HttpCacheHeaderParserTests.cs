@@ -70,6 +70,22 @@ public class HttpCacheHeaderParserTests
     }
 
     [Fact]
+    public void Parse_age_rejects_non_ascii_digits()
+    {
+        HttpCacheHeaderParser.ParseAge(["١٢٣"]).ShouldBeNull();
+        HttpCacheHeaderParser.ParseAge(["１２３"]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void Parse_cache_control_rejects_non_ascii_digits_in_delta_seconds()
+    {
+        var parsed = HttpCacheHeaderParser.ParseCacheControl(["max-age=١٢٣, s-maxage=１２３"]);
+
+        parsed.MaxAge.ShouldBeNull();
+        parsed.SharedMaxAge.ShouldBeNull();
+    }
+
+    [Fact]
     public void Parse_http_date_accepts_supported_formats()
     {
         HttpCacheHeaderParser.ParseSingleHttpDate(["Thursday, 18-Aug-50 02:01:18 GMT"]).ShouldNotBeNull();
@@ -93,6 +109,7 @@ public class HttpCacheHeaderParserTests
     {
         HttpCacheHeaderParser.ParseSingleHttpDate(["Thu, 18 Aug 2050 02:01:18 UTC"]).ShouldBeNull();
         HttpCacheHeaderParser.ParseSingleHttpDate(["Thu, 18  Aug  2050 02:01:18 GMT"]).ShouldBeNull();
+        HttpCacheHeaderParser.ParseSingleHttpDate(["Thu, 18 Aug ٢٠٥٠ 02:01:18 GMT"]).ShouldBeNull();
         HttpCacheHeaderParser.ParseSingleHttpDate(
             [
                 "Thu, 18 Aug 2050 02:01:18 GMT",
