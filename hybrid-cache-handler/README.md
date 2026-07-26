@@ -267,7 +267,8 @@ Proxy/CDN-like cache behavior suitable for gateways:
 **Behavior:**
 - Does NOT cache responses with `Cache-Control: private`
 - Prefers `s-maxage` over `max-age`
-- Only caches authenticated requests with `public` or `s-maxage`
+- In shared mode, authenticated responses are cacheable only with explicit shared-cache permissions (`public`, `s-maxage`, or `must-revalidate`)
+- Supports targeted cache-control headers (for example `CDN-Cache-Control`) via `TargetedCacheControlHeaderNames`
 - Cache is shared across all clients/users
 
 **Example:**
@@ -284,7 +285,8 @@ new HttpHybridCacheHandlerOptions
 - **Mode**: Cache mode determining caching behavior (default: `CacheMode.Private`). Use `CacheMode.Shared` for proxy/CDN scenarios
 - **HeuristicFreshnessPercent**: Heuristic freshness percentage for responses with Last-Modified but no explicit freshness info (default: 0.1 or 10%)
 - **HeuristicFreshnessMinimum**: Minimum heuristic freshness lifetime applied when Last-Modified exists but explicit freshness is absent (default: 30 seconds)
-- **VaryHeaders**: Optional headers to include in request-key partitioning (default: empty). Correctness still comes from response `Vary` matching on cache hits
+- **VaryHeaders**: Headers to include in Vary-aware cache keys (default: none `[]`; response `Vary` matching is still enforced)
+- **TargetedCacheControlHeaderNames**: Response headers that carry targeted shared-cache directives (default: `CDN-Cache-Control`). Applied only in `CacheMode.Shared`
 - **MaxCacheableContentSize**: Maximum size in bytes for cacheable response content (default: 10 MB). Responses larger than this will not be cached
 - **FallbackCacheDuration**: Fallback cache duration for responses without explicit caching headers (default: `TimeSpan.MinValue`, meaning responses without caching headers are not cached)
 - **CompressionThreshold**: Minimum content size in bytes to enable compression (default: 1024 bytes). Set to 0 or negative value to disable compression

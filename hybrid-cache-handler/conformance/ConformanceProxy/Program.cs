@@ -29,7 +29,8 @@ var app = builder.Build();
 var options = new HttpHybridCacheHandlerOptions
 {
     Mode = CacheMode.Shared,
-    MaxCacheableContentSize = 50 * 1024 * 1024
+    MaxCacheableContentSize = 50 * 1024 * 1024,
+    VaryHeaders = []
 };
 
 var socketsHandler = new SocketsHttpHandler

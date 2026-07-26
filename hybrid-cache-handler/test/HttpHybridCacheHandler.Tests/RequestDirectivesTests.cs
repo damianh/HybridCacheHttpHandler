@@ -409,8 +409,35 @@ public class RequestDirectivesTests
         response.StatusCode.ShouldBe(HttpStatusCode.GatewayTimeout); // 504
         mockHandler.RequestCount.ShouldBe(0); // No request to origin
     }
+
     [Fact]
-    public async Task Only_if_cached_returns_504_when_cache_read_fails()
+    public async Task Head_only_if_cached_returns_cached_get_without_origin_request()
+    {
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("cached response"),
+            Headers = { { "Cache-Control", "max-age=3600" } }
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        // First request - populate GET cache
+        await client.GetAsync("https://example.com/head-resource", _ct);
+
+        // HEAD request with only-if-cached must not hit origin
+        var request = new HttpRequestMessage(HttpMethod.Head, "https://example.com/head-resource");
+        request.Headers.Add("Cache-Control", "only-if-cached");
+        var response = await client.SendAsync(request, _ct);
+        var content = await response.Content.ReadAsStringAsync(_ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        content.ShouldBeEmpty();
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Head_only_if_cached_returns_504_if_not_in_cache()
     {
         var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
         {
@@ -418,43 +445,14 @@ public class RequestDirectivesTests
             Content = new StringContent("response"),
             Headers = { { "Cache-Control", "max-age=3600" } }
         });
-        await using var fixture = new HttpHybridCacheHandlerFixture(
-            mockHandler,
-            customCache: new ThrowOnGetCache());
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
         using var client = fixture.CreateClient();
 
-        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        var request = new HttpRequestMessage(HttpMethod.Head, "https://example.com/head-resource");
         request.Headers.Add("Cache-Control", "only-if-cached");
         var response = await client.SendAsync(request, _ct);
 
         response.StatusCode.ShouldBe(HttpStatusCode.GatewayTimeout);
         mockHandler.RequestCount.ShouldBe(0);
-    }
-
-    private sealed class ThrowOnGetCache : HybridCache
-    {
-        public override ValueTask<T> GetOrCreateAsync<TState, T>(
-            string key,
-            TState state,
-            Func<TState, Ct, ValueTask<T>> factory,
-            HybridCacheEntryOptions? options = null,
-            IEnumerable<string>? tags = null,
-            Ct cancellationToken = default) =>
-            throw new InvalidOperationException("Simulated cache read failure");
-
-        public override ValueTask SetAsync<T>(
-            string key,
-            T value,
-            HybridCacheEntryOptions? options = null,
-            IEnumerable<string>? tags = null,
-            Ct cancellationToken = default) => ValueTask.CompletedTask;
-
-        public override ValueTask RemoveAsync(string key, Ct cancellationToken = default) => ValueTask.CompletedTask;
-
-        public override ValueTask RemoveAsync(IEnumerable<string> keys, Ct cancellationToken = default) => ValueTask.CompletedTask;
-
-        public override ValueTask RemoveByTagAsync(string tag, Ct cancellationToken = default) => ValueTask.CompletedTask;
-
-        public override ValueTask RemoveByTagAsync(IEnumerable<string> tags, Ct cancellationToken = default) => ValueTask.CompletedTask;
     }
 }

@@ -650,6 +650,38 @@ public class VaryTests
     }
 
     [Fact]
+    public async Task Vary_header_values_preserve_internal_whitespace()
+    {
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("response"),
+            Headers =
+            {
+                { "Cache-Control", "max-age=3600" },
+                { "Vary", "Foo" }
+            }
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Foo", "my browser");
+        await client.SendAsync(request1, _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Foo", "mybrowser");
+        await client.SendAsync(request2, _ct);
+
+        var request3 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request3.Headers.Add("Foo", "my browser");
+        await client.SendAsync(request3, _ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Accept_Language_values_match_ignoring_order_and_case()
     {
         var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage

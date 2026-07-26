@@ -26,8 +26,8 @@ public class ClientConditionalTests
             response.Content.Headers.ContentLocation = new Uri("https://example.com/resource");
         }));
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -61,8 +61,8 @@ public class ClientConditionalTests
             response.Content.Headers.LastModified = lastModified;
         }));
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -83,8 +83,8 @@ public class ClientConditionalTests
         originResponse.Headers.TryAddWithoutValidation("ETag", "abcdef");
         var mockHandler = new MockHttpMessageHandler(originResponse);
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -104,8 +104,8 @@ public class ClientConditionalTests
         originResponse.Headers.TryAddWithoutValidation("ETag", "\"def\"");
         var mockHandler = new MockHttpMessageHandler(originResponse);
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -123,8 +123,8 @@ public class ClientConditionalTests
     {
         var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached"));
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -147,8 +147,8 @@ public class ClientConditionalTests
             response.Headers.Date = responseDate;
         }));
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -169,8 +169,8 @@ public class ClientConditionalTests
             response.Content.Headers.LastModified = lastModified;
         }));
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -193,8 +193,8 @@ public class ClientConditionalTests
             response.Content.Headers.LastModified = lastModified;
         }));
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -217,8 +217,8 @@ public class ClientConditionalTests
             return Task.FromResult(CreateCacheableResponse("origin"));
         });
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
         request.Headers.TryAddWithoutValidation("If-None-Match", "abcdef");
@@ -244,11 +244,14 @@ public class ClientConditionalTests
             }
 
             validationRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = null
+            });
         });
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -279,11 +282,14 @@ public class ClientConditionalTests
             }
 
             validationRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = null
+            });
         });
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -319,11 +325,14 @@ public class ClientConditionalTests
             }
 
             validationRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = new StringContent(string.Empty)
+            });
         });
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
         fixture.AdvanceTime(TimeSpan.FromSeconds(2));
@@ -348,8 +357,8 @@ public class ClientConditionalTests
         originResponse.Headers.TryAddWithoutValidation("ETag", RawEtag);
         var mockHandler = new SingleResponseMessageHandler(originResponse);
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler, customCache: cache);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler, customCache: cache);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
@@ -376,11 +385,14 @@ public class ClientConditionalTests
             }
 
             validationRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = new StringContent(string.Empty)
+            });
         });
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
         fixture.AdvanceTime(TimeSpan.FromSeconds(2));
@@ -411,11 +423,14 @@ public class ClientConditionalTests
             }
 
             validationRequest = request;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = new StringContent(string.Empty)
+            });
         });
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
         fixture.AdvanceTime(TimeSpan.FromSeconds(2));
@@ -430,6 +445,47 @@ public class ClientConditionalTests
         validationRequest.Headers.TryGetValues("If-Modified-Since", out var ifModifiedSinceValues).ShouldBeTrue();
         ifModifiedSinceValues.Count().ShouldBe(1);
         ifModifiedSinceValues.Single().ShouldBe(lastModified.ToString("R", CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task Stale_client_conditional_revalidation_with_null_304_content_returns_304()
+    {
+        HttpRequestMessage? validationRequest = null;
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                return Task.FromResult(CreateCacheableResponse("cached", response =>
+                {
+                    response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                }));
+            }
+
+            validationRequest = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = null
+            });
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-None-Match", "\"client-token\"");
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        validationRequest.ShouldNotBeNull();
+        validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldBe(["\"client-token\""]);
+        requestCount.ShouldBe(2);
     }
 
     [Fact]
@@ -453,8 +509,8 @@ public class ClientConditionalTests
             return Task.FromResult(CreateCacheableResponse("variant-2"));
         });
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         var firstRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
         firstRequest.Headers.TryAddWithoutValidation("Abc", "123");
@@ -502,8 +558,8 @@ public class ClientConditionalTests
             return Task.FromResult(CreateCacheableResponse("variant-3"));
         });
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         var firstRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
         firstRequest.Headers.TryAddWithoutValidation("Abc", "123");

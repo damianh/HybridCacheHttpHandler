@@ -180,6 +180,30 @@ public class ResponseDirectivesTests
     }
 
     [Fact]
+    public async Task Response_with_max_age_zero_is_stored_for_only_if_cached_requests()
+    {
+        var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("response"),
+            Headers = { { "Cache-Control", "max-age=0" } }
+        });
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request.Headers.Add("Cache-Control", "only-if-cached");
+        var response = await client.SendAsync(request, _ct);
+        var body = await response.Content.ReadAsStringAsync(_ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        body.ShouldBe("response");
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task Private_responses_are_cached_in_client_cache()
     {
         var mockHandler = new MockHttpMessageHandler(new HttpResponseMessage
@@ -305,4 +329,3 @@ public class ResponseDirectivesTests
         mockHandler.RequestCount.ShouldBe(2);
     }
 }
-
