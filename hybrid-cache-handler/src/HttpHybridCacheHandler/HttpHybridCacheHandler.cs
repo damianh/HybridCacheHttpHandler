@@ -1512,6 +1512,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         response = CreateNotModifiedResponse(request, cachedResponse);
+        ApplyAgeHeader(response, cachedResponse);
         return true;
     }
 
@@ -2704,9 +2705,12 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         var contentHeaders = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-        foreach (var header in response.Content.Headers.NonValidated)
+        if (response.Content != null)
         {
-            contentHeaders[header.Key] = header.Value.ToArray();
+            foreach (var header in response.Content.Headers.NonValidated)
+            {
+                contentHeaders[header.Key] = header.Value.ToArray();
+            }
         }
 
         return new RawHeaderSnapshot(headers, contentHeaders);
@@ -2732,6 +2736,16 @@ public class HttpHybridCacheHandler : DelegatingHandler
         foreach (var header in rawHeaders.Headers)
         {
             response.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        if (response.Content == null)
+        {
+            if (rawHeaders.ContentHeaders.Count == 0)
+            {
+                return;
+            }
+
+            response.Content = new ByteArrayContent([]);
         }
 
         response.Content.Headers.Clear();

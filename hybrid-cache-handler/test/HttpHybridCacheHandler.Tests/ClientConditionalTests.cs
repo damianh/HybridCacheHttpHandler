@@ -246,7 +246,7 @@ public class ClientConditionalTests
             validationRequest = request;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
             {
-                Content = new StringContent(string.Empty)
+                Content = null
             });
         });
 
@@ -284,7 +284,7 @@ public class ClientConditionalTests
             validationRequest = request;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
             {
-                Content = new StringContent(string.Empty)
+                Content = null
             });
         });
 
@@ -445,6 +445,47 @@ public class ClientConditionalTests
         validationRequest.Headers.TryGetValues("If-Modified-Since", out var ifModifiedSinceValues).ShouldBeTrue();
         ifModifiedSinceValues.Count().ShouldBe(1);
         ifModifiedSinceValues.Single().ShouldBe(lastModified.ToString("R", CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task Stale_client_conditional_revalidation_with_null_304_content_returns_304()
+    {
+        HttpRequestMessage? validationRequest = null;
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                return Task.FromResult(CreateCacheableResponse("cached", response =>
+                {
+                    response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                }));
+            }
+
+            validationRequest = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified)
+            {
+                Content = null
+            });
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-None-Match", "\"client-token\"");
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        validationRequest.ShouldNotBeNull();
+        validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldBe(["\"client-token\""]);
+        requestCount.ShouldBe(2);
     }
 
     [Fact]
