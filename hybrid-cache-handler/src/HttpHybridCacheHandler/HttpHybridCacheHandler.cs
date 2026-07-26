@@ -834,7 +834,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return cachedResponse.LastModified.Value <= ifModifiedSinceDate;
         }
 
-        return false;
+        return cachedResponse.Date.HasValue && cachedResponse.Date.Value >= ifModifiedSinceDate;
     }
 
     private static HttpResponseMessage CreateNotModifiedResponse(HttpRequestMessage request, CachedHttpMetadata cachedResponse)

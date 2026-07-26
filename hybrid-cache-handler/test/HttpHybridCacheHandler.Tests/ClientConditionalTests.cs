@@ -139,7 +139,7 @@ public class ClientConditionalTests
     }
 
     [Fact]
-    public async Task Fresh_cached_response_without_Last_Modified_ignores_If_Modified_Since_even_when_Date_is_present()
+    public async Task Fresh_cached_response_without_Last_Modified_uses_Date_for_If_Modified_Since()
     {
         var responseDate = DateTimeOffset.UtcNow;
         var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached", response =>
@@ -154,11 +154,9 @@ public class ClientConditionalTests
 
         var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
         conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", responseDate.AddMinutes(-10).ToString("R", CultureInfo.InvariantCulture));
-
         var response = await client.SendAsync(conditionalRequest, _ct);
 
-        response.StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await response.Content.ReadAsStringAsync(_ct)).ShouldBe("cached");
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
         mockHandler.RequestCount.ShouldBe(1);
     }
 
