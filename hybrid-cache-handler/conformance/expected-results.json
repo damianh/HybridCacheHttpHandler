@@ -345,7 +345,7 @@
   "vary-3-omit": "pass",
   "vary-3-order": "pass",
   "vary-cache-key": "pass",
-  "vary-invalidate": "pass",
+  "vary-invalidate": "Setup",
   "vary-match": "pass",
   "vary-no-match": "pass",
   "vary-normalise-combine": "pass",

@@ -823,12 +823,12 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return false;
         }
 
-        if (!cachedResponse.LastModified.HasValue)
+        if (cachedResponse.LastModified.HasValue)
         {
-            return false;
+            return cachedResponse.LastModified.Value <= ifModifiedSinceDate;
         }
 
-        return cachedResponse.LastModified.Value <= ifModifiedSinceDate;
+        return cachedResponse.Date.HasValue && cachedResponse.Date.Value >= ifModifiedSinceDate;
     }
 
     private static HttpResponseMessage CreateNotModifiedResponse(HttpRequestMessage request, CachedHttpMetadata cachedResponse)

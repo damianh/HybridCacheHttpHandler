@@ -108,7 +108,7 @@ public class ClientConditionalTests
     }
 
     [Fact]
-    public async Task Fresh_cached_response_without_Last_Modified_ignores_If_Modified_Since()
+    public async Task Fresh_cached_response_without_Last_Modified_or_Date_ignores_If_Modified_Since()
     {
         var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached"));
 
@@ -124,6 +124,29 @@ public class ClientConditionalTests
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         (await response.Content.ReadAsStringAsync(_ct)).ShouldBe("cached");
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Fresh_cached_response_without_Last_Modified_uses_Date_for_If_Modified_Since()
+    {
+        var responseDate = DateTimeOffset.UtcNow;
+        var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached", response =>
+        {
+            response.Headers.Date = responseDate;
+        }));
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", responseDate.AddMinutes(-10).ToString("R", CultureInfo.InvariantCulture));
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
         mockHandler.RequestCount.ShouldBe(1);
     }
 
