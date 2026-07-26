@@ -101,6 +101,56 @@ public class ValidationTests
     }
 
     [Fact]
+    public async Task Response_304_without_age_preserves_current_age()
+    {
+        var requestCount = 0;
+        var now = DateTimeOffset.Parse("2024-01-01T12:00:00Z");
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                var response = new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new StringContent("content")
+                };
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
+                response.Headers.Date = now;
+                response.Headers.TryAddWithoutValidation("Age", "120");
+                response.Headers.ETag = new EntityTagHeaderValue("\"123\"");
+                return response;
+            }
+
+            var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+            notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+            notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"123\"");
+            return notModifiedResponse;
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        fixture.SetUtcNow(now);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        var revalidatedResponse = await client.GetAsync("https://example.com/resource", _ct);
+        var revalidatedAge = revalidatedResponse.Headers.Age;
+
+        revalidatedAge.ShouldNotBeNull();
+        revalidatedAge.Value.TotalSeconds.ShouldBeGreaterThanOrEqualTo(122);
+
+        fixture.AdvanceTime(TimeSpan.FromSeconds(5));
+        var cachedResponse = await client.GetAsync("https://example.com/resource", _ct);
+        var cachedAge = cachedResponse.Headers.Age;
+
+        cachedAge.ShouldNotBeNull();
+        cachedAge.Value.TotalSeconds.ShouldBeGreaterThanOrEqualTo(127);
+        requestCount.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Response_304_returns_cached_body()
     {
         var requestCount = 0;

@@ -483,6 +483,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             ? HttpCacheHeaderParser.ParseSingleHttpDate(expiresValues!) ?? DateTimeOffset.MinValue
             : null;
         var updatedDate = notModifiedResponse.Headers.Date;
+        var currentAge = CalculateCurrentAge(cached);
+        var now = _timeProvider.GetUtcNow();
 
         // Extract Age from 304 response if present
         var updatedAge = notModifiedResponse.Headers.TryGetValues("Age", out var ageValues)
@@ -497,13 +499,13 @@ public class HttpHybridCacheHandler : DelegatingHandler
             ContentLength = cached.ContentLength,
             Headers = cached.Headers,
             ContentHeaders = cached.ContentHeaders,
-            CachedAt = _timeProvider.GetUtcNow(),
+            CachedAt = now,
             MaxAge = updatedMaxAge ?? cached.MaxAge,
             ETag = cached.ETag,
             LastModified = cached.LastModified,
             Expires = updatedExpires ?? cached.Expires,
             Date = updatedDate ?? cached.Date,
-            Age = updatedAge ?? TimeSpan.Zero,
+            Age = updatedAge ?? currentAge,
             VaryHeaders = cached.VaryHeaders,
             VaryHeaderValues = cached.VaryHeaderValues,
             StaleWhileRevalidate = hasCacheControl ? parsedCacheControl.StaleWhileRevalidate : cached.StaleWhileRevalidate,
