@@ -42,6 +42,12 @@ public class HttpHybridCacheHandler : DelegatingHandler
     private readonly TimeProvider _timeProvider;
     private readonly HttpHybridCacheHandlerOptions _options;
     private readonly ILogger _logger;
+    private static readonly HashSet<string> NotModifiedContentHeaders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Content-Location",
+        "Expires",
+        "Last-Modified"
+    };
     private static readonly Meter Meter = new(
         "DamianH.HttpHybridCacheHandler",
         typeof(HttpHybridCacheHandler).Assembly.GetName().Version?.ToString() ?? "1.0.0");
@@ -828,7 +834,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return cachedResponse.LastModified.Value <= ifModifiedSinceDate;
         }
 
-        return cachedResponse.Date.HasValue && cachedResponse.Date.Value >= ifModifiedSinceDate;
+        return false;
     }
 
     private static HttpResponseMessage CreateNotModifiedResponse(HttpRequestMessage request, CachedHttpMetadata cachedResponse)
@@ -843,6 +849,15 @@ public class HttpHybridCacheHandler : DelegatingHandler
         {
             response.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
+
+        foreach (var header in cachedResponse.ContentHeaders)
+        {
+            if (NotModifiedContentHeaders.Contains(header.Key))
+            {
+                response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+        }
+
         return response;
     }
 

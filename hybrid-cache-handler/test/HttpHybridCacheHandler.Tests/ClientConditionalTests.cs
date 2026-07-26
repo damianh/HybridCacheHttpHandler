@@ -16,9 +16,14 @@ public class ClientConditionalTests
     [Fact]
     public async Task Fresh_cached_ETag_match_returns_304()
     {
+        var lastModified = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var expires = DateTimeOffset.UtcNow.AddMinutes(30);
         var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached", response =>
         {
             response.Headers.ETag = new EntityTagHeaderValue("\"abcdef\"");
+            response.Content.Headers.LastModified = lastModified;
+            response.Content.Headers.Expires = expires;
+            response.Content.Headers.ContentLocation = new Uri("https://example.com/resource");
         }));
 
         var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
@@ -35,6 +40,12 @@ public class ClientConditionalTests
         response.Content.Headers.Contains("Content-Length").ShouldBeFalse();
         response.Content.Headers.Contains("Content-Type").ShouldBeFalse();
         response.Content.Headers.Contains("Content-Encoding").ShouldBeFalse();
+        response.Content.Headers.TryGetValues("Last-Modified", out var lastModifiedValues).ShouldBeTrue();
+        lastModifiedValues.ShouldBe([lastModified.ToString("R", CultureInfo.InvariantCulture)]);
+        response.Content.Headers.TryGetValues("Expires", out var expiresValues).ShouldBeTrue();
+        expiresValues.ShouldBe([expires.ToString("R", CultureInfo.InvariantCulture)]);
+        response.Content.Headers.TryGetValues("Content-Location", out var contentLocationValues).ShouldBeTrue();
+        contentLocationValues.ShouldBe(["https://example.com/resource"]);
         response.Headers.TryGetValues("ETag", out var etagValues).ShouldBeTrue();
         etagValues.ShouldContain("\"abcdef\"");
         mockHandler.RequestCount.ShouldBe(1);
@@ -128,7 +139,7 @@ public class ClientConditionalTests
     }
 
     [Fact]
-    public async Task Fresh_cached_response_without_Last_Modified_uses_Date_for_If_Modified_Since()
+    public async Task Fresh_cached_response_without_Last_Modified_ignores_If_Modified_Since_even_when_Date_is_present()
     {
         var responseDate = DateTimeOffset.UtcNow;
         var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached", response =>
@@ -146,7 +157,8 @@ public class ClientConditionalTests
 
         var response = await client.SendAsync(conditionalRequest, _ct);
 
-        response.StatusCode.ShouldBe(HttpStatusCode.NotModified);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await response.Content.ReadAsStringAsync(_ct)).ShouldBe("cached");
         mockHandler.RequestCount.ShouldBe(1);
     }
 
