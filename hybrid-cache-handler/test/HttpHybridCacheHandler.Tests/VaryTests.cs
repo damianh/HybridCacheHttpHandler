@@ -237,16 +237,21 @@ public class VaryTests
     }
 
     [Fact]
-    public async Task Vary_miss_does_not_revalidate_using_non_matching_variant_validator()
+    public async Task Vary_miss_falls_back_when_non_matching_variant_validator_returns_304()
     {
         var requestCount = 0;
-        HttpRequestMessage? secondRequest = null;
+        HttpRequestMessage? conditionalValidationRequest = null;
+        HttpRequestMessage? fallbackRequest = null;
         var mockHandler = new MockHttpMessageHandler(request =>
         {
             requestCount++;
             if (requestCount == 2)
             {
-                secondRequest = request;
+                conditionalValidationRequest = request;
+            }
+            else if (requestCount == 3)
+            {
+                fallbackRequest = request;
             }
 
             if (requestCount == 1)
@@ -307,9 +312,12 @@ public class VaryTests
 
         response2.StatusCode.ShouldBe(HttpStatusCode.OK);
         (await response2.Content.ReadAsStringAsync(_ct)).ShouldBe("response_2");
-        secondRequest.ShouldNotBeNull();
-        secondRequest.Headers.IfNoneMatch.ShouldBeEmpty();
-        requestCount.ShouldBe(2);
+        conditionalValidationRequest.ShouldNotBeNull();
+        conditionalValidationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldContain("\"shared\"");
+        fallbackRequest.ShouldNotBeNull();
+        fallbackRequest.Headers.IfNoneMatch.ShouldBeEmpty();
+        requestCount.ShouldBe(3);
     }
 
     [Fact]

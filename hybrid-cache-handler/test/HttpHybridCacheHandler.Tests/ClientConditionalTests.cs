@@ -433,7 +433,7 @@ public class ClientConditionalTests
     }
 
     [Fact]
-    public async Task Fresh_Vary_mismatch_sends_unconditional_request()
+    public async Task Fresh_Vary_mismatch_revalidates_with_stored_ETag()
     {
         HttpRequestMessage? validationRequest = null;
         var requestCount = 0;
@@ -468,12 +468,12 @@ public class ClientConditionalTests
         validationRequest.ShouldNotBeNull();
         validationRequest.Headers.TryGetValues("Abc", out var abcValues).ShouldBeTrue();
         abcValues.ShouldBe(["456"]);
-        validationRequest.Headers.TryGetValues("If-None-Match", out _).ShouldBeFalse();
-        validationRequest.Headers.TryGetValues("If-Modified-Since", out _).ShouldBeFalse();
+        validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldBe(["\"abcdef\""]);
     }
 
     [Fact]
-    public async Task Fresh_Vary_mismatch_with_200_response_updates_cached_variant_without_validator()
+    public async Task Fresh_Vary_mismatch_with_200_response_updates_cached_variant()
     {
         HttpRequestMessage? validationRequest = null;
         var requestCount = 0;
@@ -519,8 +519,8 @@ public class ClientConditionalTests
 
         requestCount.ShouldBe(2);
         validationRequest.ShouldNotBeNull();
-        validationRequest.Headers.TryGetValues("If-None-Match", out _).ShouldBeFalse();
-        validationRequest.Headers.TryGetValues("If-Modified-Since", out _).ShouldBeFalse();
+        validationRequest.Headers.TryGetValues("If-None-Match", out var ifNoneMatchValues).ShouldBeTrue();
+        ifNoneMatchValues.ShouldBe(["\"abcdef\""]);
         (await secondResponse.Content.ReadAsStringAsync(_ct)).ShouldBe("variant-2");
         (await thirdResponse.Content.ReadAsStringAsync(_ct)).ShouldBe("variant-2");
     }
