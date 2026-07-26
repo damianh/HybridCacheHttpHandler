@@ -251,16 +251,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         if (hasRangeRequest && completeResponseKey != null)
         {
-            var completeResponseCandidate = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
-                completeResponseKey,
-                _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
-                cancellationToken: ct
-            );
+            var completeResponseEntry = await GetCacheEntryAsync(completeResponseKey, ct);
+            var completeResponseCandidate = completeResponseEntry == null
+                ? null
+                : VaryMatcher.SelectVariant(completeResponseEntry, request, candidate => IsFresh(candidate, request));
 
             if (completeResponseCandidate != null &&
                 !mustRevalidate &&
-                !completeResponseCandidate.NoCache &&
-                IsFresh(completeResponseCandidate, request))
+                !completeResponseCandidate.NoCache)
             {
                 var cachedRangeResponse = await TryServeRangeFromCachedMetadataAsync(completeResponseCandidate, requestedRange, request, ct);
                 if (cachedRangeResponse != null)
@@ -560,7 +558,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         {
                             try
                             {
-                                await _cache.SetAsync(cacheKey2, replacement, CreateCacheEntryOptions(replacement), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
+                                var replacementEntry = ReplaceVariant(cachedEntry, cachedResponse, replacement);
+                                await _cache.SetAsync(cacheKey2, replacementEntry, CreateCacheEntryOptions(replacementEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
                             }
                             catch (Exception ex)
                             {
@@ -1026,10 +1025,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var headResponse = await base.SendAsync(request, ct);
         var getCacheKey = GenerateVaryAwareCacheKey(request, cacheMethod: HttpMethod.Get);
 
-        var cachedGet = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
-            getCacheKey,
-            _ => ValueTask.FromResult<CachedHttpMetadata?>(null),
-            cancellationToken: ct);
+        var cachedGetEntry = await GetCacheEntryAsync(getCacheKey, ct);
+        var cachedGet = cachedGetEntry == null
+            ? null
+            : VaryMatcher.SelectVariant(cachedGetEntry, request);
 
         if (cachedGet == null || cachedGet.IsPartial)
         {
@@ -1044,7 +1043,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             var updated = UpdateCachedEntry(cachedGet, headResponse);
             try
             {
-                await _cache.SetAsync(getCacheKey, updated, CreateCacheEntryOptions(updated), cancellationToken: ct);
+                var updatedEntry = ReplaceVariant(cachedGetEntry!, cachedGet, updated);
+                await _cache.SetAsync(getCacheKey, updatedEntry, CreateCacheEntryOptions(updatedEntry), cancellationToken: ct);
             }
             catch (Exception ex)
             {

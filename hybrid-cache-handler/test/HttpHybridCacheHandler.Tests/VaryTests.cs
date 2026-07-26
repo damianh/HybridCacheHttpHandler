@@ -663,8 +663,8 @@ public class VaryTests
             }
         });
 
-        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        var client = fixture.CreateClient();
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
 
         var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
         request1.Headers.Add("Foo", "my browser");
