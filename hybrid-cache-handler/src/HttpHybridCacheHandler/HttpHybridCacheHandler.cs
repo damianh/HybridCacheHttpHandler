@@ -806,11 +806,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var updatedMaxAge = directives.MaxAge;
         var updatedExpires = notModifiedResponse.Content.Headers.Expires;
         var updatedDate = notModifiedResponse.Headers.Date;
+        var effectiveQualifiedNoCacheHeaderNames = hasAnyDirectiveHeaders
+            ? directives.QualifiedNoCacheHeaderNames
+            : cached.QualifiedNoCacheHeaderNames;
         var mergedHeaders = new Dictionary<string, string[]>(cached.Headers, StringComparer.OrdinalIgnoreCase);
         var mergedContentHeaders = new Dictionary<string, string[]>(cached.ContentHeaders, StringComparer.OrdinalIgnoreCase);
         var updatedResponseHeaders = CaptureHeaders(notModifiedResponse.Headers);
         var updatedResponseContentHeaders = CaptureHeaders(notModifiedResponse.Content.Headers);
-        var stripNames = BuildStoredHeaderStripSet(notModifiedResponse, null);
+        var stripNames = BuildStoredHeaderStripSet(notModifiedResponse, effectiveQualifiedNoCacheHeaderNames);
         RemoveHeaders(updatedResponseHeaders, stripNames);
         RemoveHeaders(updatedResponseContentHeaders, stripNames);
         UpsertHeaderDictionary(mergedHeaders, updatedResponseHeaders);
@@ -842,9 +845,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             MustRevalidate = hasAnyDirectiveHeaders ? directives.MustRevalidate : cached.MustRevalidate,
             ProxyRevalidate = hasAnyDirectiveHeaders ? directives.ProxyRevalidate : cached.ProxyRevalidate,
             NoCache = hasAnyDirectiveHeaders ? directives.NoCache : cached.NoCache,
-            QualifiedNoCacheHeaderNames = hasAnyDirectiveHeaders
-                ? directives.QualifiedNoCacheHeaderNames
-                : cached.QualifiedNoCacheHeaderNames,
+            QualifiedNoCacheHeaderNames = effectiveQualifiedNoCacheHeaderNames,
             IgnoreStoredAge = hasAnyDirectiveHeaders ? directives.IgnoreStoredAge : cached.IgnoreStoredAge,
             IsCompressed = cached.IsCompressed,
             IsPartial = cached.IsPartial,
@@ -1118,7 +1119,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return await TryServeRangeFromCachedPartialAsync(cachedEntry, requestedRange, request, ct);
         }
 
-        var cachedCompleteResponse = await DeserializeResponseAsync(cachedEntry, ct);
+        using var cachedCompleteResponse = await DeserializeResponseAsync(cachedEntry, ct);
         if (cachedCompleteResponse == null)
         {
             return null;
@@ -1153,7 +1154,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return null;
         }
 
-        var cachedResponse = await DeserializeResponseAsync(cachedPartialEntry, ct);
+        using var cachedResponse = await DeserializeResponseAsync(cachedPartialEntry, ct);
         if (cachedResponse == null)
         {
             return null;
@@ -1990,7 +1991,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
     private bool TryGetTargetedCacheControlValue(HttpResponseMessage response, out string value)
     {
-        foreach (var headerName in _options.TargetedCacheControlHeaderNames)
+        foreach (var headerName in EnumerateTargetedCacheControlHeaderNames())
         {
             var values = GetHeaderValues(response.Headers, headerName);
             if (values.Length > 0)
@@ -2002,6 +2003,22 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         value = string.Empty;
         return false;
+    }
+
+    private IEnumerable<string> EnumerateTargetedCacheControlHeaderNames()
+    {
+        if (_options.TargetedCacheControlHeaderNames is not { Length: > 0 } headerNames)
+        {
+            yield break;
+        }
+
+        foreach (var headerName in headerNames)
+        {
+            if (!string.IsNullOrWhiteSpace(headerName))
+            {
+                yield return headerName;
+            }
+        }
     }
 
     private static string[] GetHeaderValues(HttpHeaders headers, string headerName)
@@ -2140,7 +2157,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
     private bool HasAnyDirectiveHeaders(HttpResponseMessage response)
         => response.Headers.Contains("Cache-Control") ||
-           _options.TargetedCacheControlHeaderNames.Any(response.Headers.Contains);
+           EnumerateTargetedCacheControlHeaderNames().Any(response.Headers.Contains);
 
     private static TimeSpan? ParseAgeHeader(HttpResponseMessage response)
     {

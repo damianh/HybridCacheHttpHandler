@@ -111,4 +111,14 @@ public class CachingHttpHandlerConfigurationTests
         await client.GetAsync(TestUrl, _ct);
         mockHandler.RequestCount.ShouldBe(1);
     }
+
+    [Fact]
+    public void Targeted_cache_control_header_names_do_not_mutate_defaults()
+    {
+        var options = new HttpHybridCacheHandlerOptions();
+
+        options.TargetedCacheControlHeaderNames[0] = "X-Test-Cache-Control";
+
+        HttpHybridCacheHandlerOptions.DefaultTargetedCacheControlHeaderNames[0].ShouldBe("CDN-Cache-Control");
+    }
 }

@@ -102,11 +102,9 @@ public class ValidationTests
     }
 
     [Fact]
-    public async Task Response_304_with_cache_control_without_max_age_clears_previous_max_age()
+    public async Task Response_304_does_not_reintroduce_qualified_no_cache_headers()
     {
         var requestCount = 0;
-        var now = DateTimeOffset.Parse("2024-01-01T12:00:00Z");
-        var revalidationDate = now.AddSeconds(2);
         var mockHandler = new MockHttpMessageHandler(() =>
         {
             requestCount++;
@@ -117,125 +115,39 @@ public class ValidationTests
                     StatusCode = HttpStatusCode.OK,
                     Content = new StringContent("content")
                 };
-                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
-                response.Headers.Date = now;
-                response.Headers.ETag = new EntityTagHeaderValue("\"123\"");
+                response.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1, no-cache=\"Set-Cookie\"");
+                response.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
                 return response;
             }
 
-            var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
-            notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { Public = true };
-            notModifiedResponse.Headers.Date = revalidationDate;
-            notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"123\"");
-            return notModifiedResponse;
+            if (requestCount == 2)
+            {
+                var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+                notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+                notModifiedResponse.Headers.TryAddWithoutValidation("Set-Cookie", "session=from-304");
+                return notModifiedResponse;
+            }
+
+            var updatedNotModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
+            updatedNotModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromMinutes(2) };
+            updatedNotModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"v1\"");
+            return updatedNotModifiedResponse;
         });
 
-        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        fixture.SetUtcNow(now);
-        using var client = fixture.CreateClient();
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
 
         await client.GetAsync("https://example.com/resource", _ct);
 
         fixture.AdvanceTime(TimeSpan.FromSeconds(2));
-        await client.GetAsync("https://example.com/resource", _ct);
+        var secondResponse = await client.GetAsync("https://example.com/resource", _ct);
 
-        await client.GetAsync("https://example.com/resource", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+        var thirdResponse = await client.GetAsync("https://example.com/resource", _ct);
 
+        secondResponse.Headers.Contains("Set-Cookie").ShouldBeFalse();
+        thirdResponse.Headers.Contains("Set-Cookie").ShouldBeFalse();
         requestCount.ShouldBe(3);
-    }
-
-    [Fact]
-    public async Task Response_304_without_age_preserves_current_age()
-    {
-        var requestCount = 0;
-        var now = DateTimeOffset.Parse("2024-01-01T12:00:00Z");
-        var mockHandler = new MockHttpMessageHandler(() =>
-        {
-            requestCount++;
-            if (requestCount == 1)
-            {
-                var response = new HttpResponseMessage
-                {
-                    StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent("content")
-                };
-                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(1) };
-                response.Headers.Date = now;
-                response.Headers.TryAddWithoutValidation("Age", "120");
-                response.Headers.ETag = new EntityTagHeaderValue("\"123\"");
-                return response;
-            }
-
-            var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
-            notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
-            notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"123\"");
-            return notModifiedResponse;
-        });
-
-        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        fixture.SetUtcNow(now);
-        using var client = fixture.CreateClient();
-
-        await client.GetAsync("https://example.com/resource", _ct);
-
-        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
-        var revalidatedResponse = await client.GetAsync("https://example.com/resource", _ct);
-        var revalidatedAge = revalidatedResponse.Headers.Age;
-
-        revalidatedAge.ShouldNotBeNull();
-        revalidatedAge.Value.TotalSeconds.ShouldBeGreaterThanOrEqualTo(122);
-
-        fixture.AdvanceTime(TimeSpan.FromSeconds(5));
-        var cachedResponse = await client.GetAsync("https://example.com/resource", _ct);
-        var cachedAge = cachedResponse.Headers.Age;
-
-        cachedAge.ShouldNotBeNull();
-        cachedAge.Value.TotalSeconds.ShouldBeGreaterThanOrEqualTo(127);
-        requestCount.ShouldBe(2);
-    }
-
-    [Fact]
-    public async Task Response_304_with_date_and_without_age_allows_fresh_reuse()
-    {
-        var requestCount = 0;
-        var now = DateTimeOffset.Parse("2024-01-01T12:00:00Z");
-        var revalidationDate = now.AddSeconds(3);
-        var mockHandler = new MockHttpMessageHandler(() =>
-        {
-            requestCount++;
-            if (requestCount == 1)
-            {
-                var response = new HttpResponseMessage
-                {
-                    StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent("content")
-                };
-                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(2) };
-                response.Headers.Date = now;
-                response.Headers.ETag = new EntityTagHeaderValue("\"123\"");
-                return response;
-            }
-
-            var notModifiedResponse = new HttpResponseMessage(HttpStatusCode.NotModified);
-            notModifiedResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(2) };
-            notModifiedResponse.Headers.Date = revalidationDate;
-            notModifiedResponse.Headers.ETag = new EntityTagHeaderValue("\"123\"");
-            return notModifiedResponse;
-        });
-
-        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
-        fixture.SetUtcNow(now);
-        using var client = fixture.CreateClient();
-
-        await client.GetAsync("https://example.com/resource", _ct);
-
-        fixture.AdvanceTime(TimeSpan.FromSeconds(3));
-        await client.GetAsync("https://example.com/resource", _ct);
-
-        fixture.AdvanceTime(TimeSpan.FromSeconds(1));
-        await client.GetAsync("https://example.com/resource", _ct);
-
-        requestCount.ShouldBe(2);
     }
 
     [Fact]

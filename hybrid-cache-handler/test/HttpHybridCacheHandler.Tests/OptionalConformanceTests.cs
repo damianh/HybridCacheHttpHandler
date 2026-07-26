@@ -152,6 +152,58 @@ public class OptionalConformanceTests
     }
 
     [Fact]
+    public async Task Shared_cache_handles_null_targeted_cache_control_header_names()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("cdn")
+        };
+        response.Headers.TryAddWithoutValidation("Cache-Control", "no-store");
+        response.Headers.TryAddWithoutValidation("CDN-Cache-Control", "max-age=60");
+
+        var mockHandler = new MockHttpMessageHandler(response);
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            options =>
+            {
+                options.Mode = CacheMode.Shared;
+                options.TargetedCacheControlHeaderNames = null!;
+            });
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/cdn-null-targeted-headers", _ct);
+        await client.GetAsync("https://example.com/cdn-null-targeted-headers", _ct);
+
+        mockHandler.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Shared_cache_ignores_invalid_targeted_cache_control_header_names()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("cdn")
+        };
+        response.Headers.TryAddWithoutValidation("Cache-Control", "no-store");
+        response.Headers.TryAddWithoutValidation("CDN-Cache-Control", "max-age=60");
+
+        var mockHandler = new MockHttpMessageHandler(response);
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            options =>
+            {
+                options.Mode = CacheMode.Shared;
+                options.TargetedCacheControlHeaderNames = [null!, " ", "\t", "CDN-Cache-Control"];
+            });
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/cdn-targeted-header-filtering", _ct);
+        await client.GetAsync("https://example.com/cdn-targeted-header-filtering", _ct);
+
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task Shared_cache_recognizes_cdn_cache_control_max_age()
     {
         var response = new HttpResponseMessage(HttpStatusCode.OK)
