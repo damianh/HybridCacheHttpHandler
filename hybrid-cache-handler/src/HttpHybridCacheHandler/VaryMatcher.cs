@@ -59,7 +59,7 @@ internal static class VaryMatcher
                     value = storedValue;
                 }
 
-                return $"{h.ToLowerInvariant()}={CanonicalizeForSignature(h, value)}";
+                return $"{h.ToLowerInvariant()}={EscapeVariantSignatureValue(CanonicalizeForSignature(h, value))}";
             });
 
         return string.Join("|", parts);
@@ -462,6 +462,12 @@ internal static class VaryMatcher
         headerName.Equals("Accept-Language", StringComparison.OrdinalIgnoreCase)
             ? CanonicalizeAcceptLanguage(value)
             : value;
+
+    private static string EscapeVariantSignatureValue(string value) =>
+        value
+            .Replace("\\", "\\\\")
+            .Replace("|", "\\|")
+            .Replace("=", "\\=");
 
     private static string CanonicalizeAcceptLanguage(string value)
     {

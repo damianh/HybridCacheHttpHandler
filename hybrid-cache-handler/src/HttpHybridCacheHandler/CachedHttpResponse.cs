@@ -5,7 +5,13 @@ namespace DamianH.HttpHybridCacheHandler;
 
 internal sealed class CachedHttpEntry
 {
-    public required List<CachedHttpMetadata> Variants { get; init; }
+    private List<CachedHttpMetadata>? _variants;
+
+    public List<CachedHttpMetadata> Variants
+    {
+        get => _variants ??= [];
+        init => _variants = value;
+    }
 }
 
 /// <summary>

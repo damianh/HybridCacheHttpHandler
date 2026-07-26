@@ -609,13 +609,86 @@ public class VaryTests
                     ["Accept-Language"] = "en;q=0.5"
                 });
 
-            signature.ShouldBe("accept-language=en;q=0.5");
+            signature.ShouldBe("accept-language=en;q\\=0.5");
         }
         finally
         {
             CultureInfo.CurrentCulture = originalCulture;
             CultureInfo.CurrentUICulture = originalUiCulture;
         }
+    }
+
+    [Fact]
+    public void BuildVariantSignature_escapes_delimiters_to_avoid_collisions()
+    {
+        var firstSignature = VaryMatcher.BuildVariantSignature(
+            ["Bar", "Foo"],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Bar"] = "alpha|foo=bravo",
+                ["Foo"] = "charlie"
+            });
+
+        var secondSignature = VaryMatcher.BuildVariantSignature(
+            ["Bar", "Foo"],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Bar"] = "alpha",
+                ["Foo"] = "bravo|foo=charlie"
+            });
+
+        firstSignature.ShouldBe("bar=alpha\\|foo\\=bravo|foo=charlie");
+        secondSignature.ShouldBe("bar=alpha|foo=bravo\\|foo\\=charlie");
+        firstSignature.ShouldNotBe(secondSignature);
+    }
+
+    [Fact]
+    public async Task Colliding_Vary_header_values_do_not_replace_existing_variant()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(request =>
+        {
+            requestCount++;
+            var bar = request.Headers.TryGetValues("Bar", out var barValues)
+                ? barValues.Single()
+                : "missing";
+            var foo = request.Headers.TryGetValues("Foo", out var fooValues)
+                ? fooValues.Single()
+                : "missing";
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent($"{bar}/{foo}"),
+                Headers =
+                {
+                    { "Cache-Control", "max-age=3600" },
+                    { "Vary", "Bar, Foo" }
+                }
+            });
+        });
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request1.Headers.Add("Bar", "alpha|foo=bravo");
+        request1.Headers.Add("Foo", "charlie");
+        var response1 = await client.SendAsync(request1, _ct);
+        (await response1.Content.ReadAsStringAsync(_ct)).ShouldBe("alpha|foo=bravo/charlie");
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request2.Headers.Add("Bar", "alpha");
+        request2.Headers.Add("Foo", "bravo|foo=charlie");
+        var response2 = await client.SendAsync(request2, _ct);
+        (await response2.Content.ReadAsStringAsync(_ct)).ShouldBe("alpha/bravo|foo=charlie");
+
+        var request3 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        request3.Headers.Add("Bar", "alpha|foo=bravo");
+        request3.Headers.Add("Foo", "charlie");
+        var response3 = await client.SendAsync(request3, _ct);
+        (await response3.Content.ReadAsStringAsync(_ct)).ShouldBe("alpha|foo=bravo/charlie");
+
+        requestCount.ShouldBe(2);
     }
 
     [Fact]

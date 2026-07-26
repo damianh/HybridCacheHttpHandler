@@ -89,6 +89,34 @@ public class ErrorHandlingTests
     }
 
     [Fact]
+    public async Task Legacy_entry_with_null_variants_is_treated_as_cache_miss_and_repaired()
+    {
+        var cache = new InspectableHybridCache();
+        await cache.SetAsync($"GET:{TestUrl}::", new CachedHttpEntry { Variants = null! }, cancellationToken: _ct);
+
+        var mockResponse = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("response")
+        };
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(60) };
+        var mockHandler = new MockHttpMessageHandler(() => mockResponse);
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler, customCache: cache);
+        using var client = fixture.CreateClient();
+
+        var firstResponse = await client.GetAsync(TestUrl, _ct);
+        firstResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var secondResponse = await client.GetAsync(TestUrl, _ct);
+        secondResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        mockHandler.RequestCount.ShouldBe(1);
+        cache.GetMetadataEntry().ShouldNotBeNull();
+        cache.GetMetadataEntry()!.Variants.Count.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task Cache_write_failure_doesnt_break_request()
     {
         var cache = new FaultyCache(shouldFailOnSet: true);
