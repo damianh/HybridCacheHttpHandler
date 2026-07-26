@@ -47,10 +47,11 @@ public class OptionalConformanceTests
         await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
         using var client = fixture.CreateClient();
 
-        await client.GetAsync("https://example.com/qualified-no-cache", _ct);
+        var originResponse = await client.GetAsync("https://example.com/qualified-no-cache", _ct);
         var cachedResponse = await client.GetAsync("https://example.com/qualified-no-cache", _ct);
 
         mockHandler.RequestCount.ShouldBe(1);
+        originResponse.Headers.Contains("Set-Cookie").ShouldBeTrue();
         cachedResponse.Headers.Contains("Set-Cookie").ShouldBeFalse();
     }
 
@@ -176,6 +177,72 @@ public class OptionalConformanceTests
         await client.SendAsync(request2, _ct);
 
         mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Shared_cache_recognizes_cdn_cache_control_public_for_authorized_requests()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("authorized")
+        };
+        response.Content.Headers.Expires = DateTimeOffset.UtcNow.AddMinutes(1);
+        response.Headers.TryAddWithoutValidation("CDN-Cache-Control", "public");
+
+        var mockHandler = new MockHttpMessageHandler(response);
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            options => options.Mode = CacheMode.Shared);
+        using var client = fixture.CreateClient();
+
+        var request1 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/cdn-public-auth");
+        request1.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "token");
+        await client.SendAsync(request1, _ct);
+
+        var request2 = new HttpRequestMessage(HttpMethod.Get, "https://example.com/cdn-public-auth");
+        request2.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "token");
+        await client.SendAsync(request2, _ct);
+
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Shared_cache_retains_proxy_revalidate_when_cdn_cache_control_present()
+    {
+        var requestCount = 0;
+        var mockHandler = new MockHttpMessageHandler(() =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+            {
+                var initial = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("cached")
+                };
+                initial.Headers.TryAddWithoutValidation("Cache-Control", "max-age=1, proxy-revalidate");
+                initial.Headers.TryAddWithoutValidation("CDN-Cache-Control", "max-age=1");
+                return initial;
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("origin-down")
+            };
+        });
+
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            options => options.Mode = CacheMode.Shared);
+        using var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/cdn-proxy-revalidate", _ct);
+        fixture.AdvanceTime(TimeSpan.FromSeconds(2));
+
+        var response = await client.GetAsync("https://example.com/cdn-proxy-revalidate", _ct);
+        var body = await response.Content.ReadAsStringAsync(_ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+        body.ShouldBe("origin-down");
     }
 
     [Fact]

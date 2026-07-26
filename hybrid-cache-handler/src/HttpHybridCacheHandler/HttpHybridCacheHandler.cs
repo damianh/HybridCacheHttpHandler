@@ -140,11 +140,6 @@ public class HttpHybridCacheHandler : DelegatingHandler
             return response;
         }
 
-        if (request.Method == HttpMethod.Head)
-        {
-            return await SendHeadAndUpdateCachedGetAsync(request, ct);
-        }
-
         var hasRangeRequest = TryGetSingleByteRange(request, out var requestedRange);
 
         // Check request Cache-Control directives
@@ -153,8 +148,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
         // Handle only-if-cached
         if (requestCacheControl?.OnlyIfCached == true)
         {
-            var cacheKey = GenerateVaryAwareCacheKey(request, includeRange: hasRangeRequest);
-            var completeResponseCacheKey = hasRangeRequest ? GenerateVaryAwareCacheKey(request) : null;
+            var cacheMethod = request.Method == HttpMethod.Head ? HttpMethod.Get : null;
+            var cacheKey = GenerateVaryAwareCacheKey(request, cacheMethod, includeRange: hasRangeRequest);
+            var completeResponseCacheKey = hasRangeRequest
+                ? GenerateVaryAwareCacheKey(request, cacheMethod)
+                : null;
 
             var cachedEntry = await _cache.GetOrCreateAsync<CachedHttpMetadata?>(
                 cacheKey,
@@ -173,29 +171,27 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
             if (cachedEntry != null)
             {
-                if (hasRangeRequest &&
+                if (request.Method != HttpMethod.Head &&
+                    hasRangeRequest &&
                     await TryServeRangeFromCachedMetadataAsync(cachedEntry, requestedRange, request, ct) is { } cachedRangeResponse)
                 {
                     AddDiagnosticHeaders(cachedRangeResponse, DiagnosticHeaders.HitOnlyIfCached, cachedEntry);
                     return cachedRangeResponse;
                 }
 
-                        var response = await DeserializeResponseAsync(cachedVariant, ct);
-                        if (response != null)
-                        {
-                            ApplyAgeHeader(response, cachedVariant);
-                            AddDiagnosticHeaders(response, DiagnosticHeaders.HitOnlyIfCached, cachedVariant);
-                            return response;
-                        }
-
-                        await RemoveVariantFromEntryAsync(
-                            cacheKey,
-                            onlyIfCachedRequestUriTag,
-                            onlyIfCachedEntry,
-                            cachedVariant,
-                            request.RequestUri,
-                            ct);
+                var response = await DeserializeResponseAsync(cachedEntry, ct);
+                if (response != null)
+                {
+                    if (request.Method == HttpMethod.Head)
+                    {
+                        var cachedHeadResponse = BuildMergedHeadResponse(response, cachedEntry, request);
+                        response.Dispose();
+                        AddDiagnosticHeaders(cachedHeadResponse, DiagnosticHeaders.HitOnlyIfCached, cachedEntry);
+                        return cachedHeadResponse;
                     }
+
+                    AddDiagnosticHeaders(response, DiagnosticHeaders.HitOnlyIfCached, cachedEntry);
+                    return response;
                 }
             }
             catch (Exception ex)
@@ -210,6 +206,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
             };
             AddDiagnosticHeaders(gatewayTimeout, DiagnosticHeaders.MissOnlyIfCached);
             return gatewayTimeout;
+        }
+
+        if (request.Method == HttpMethod.Head)
+        {
+            return await SendHeadAndUpdateCachedGetAsync(request, ct);
         }
 
         // Handle no-store - bypass cache entirely
@@ -1958,9 +1959,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
             noStore = targeted.NoStore;
             noCache = targeted.NoCache;
             isPrivate = targeted.Private;
-            isPublic = false;
+            isPublic = targeted.Public ?? (targeted.Private ? false : isPublic);
             mustRevalidate = targeted.MustRevalidate;
-            proxyRevalidate = false;
+            proxyRevalidate = targeted.ProxyRevalidate ?? proxyRevalidate;
             maxAge = targeted.MaxAge;
             hasSharedMaxAge = targeted.MaxAge.HasValue;
             qualifiedNoCacheHeaderNames = [];
@@ -2084,10 +2085,20 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 else if (token.Equals("private", StringComparison.OrdinalIgnoreCase))
                 {
                     directives.Private = true;
+                    directives.Public = false;
+                }
+                else if (token.Equals("public", StringComparison.OrdinalIgnoreCase))
+                {
+                    directives.Public = true;
+                    directives.Private = false;
                 }
                 else if (token.Equals("must-revalidate", StringComparison.OrdinalIgnoreCase))
                 {
                     directives.MustRevalidate = true;
+                }
+                else if (token.Equals("proxy-revalidate", StringComparison.OrdinalIgnoreCase))
+                {
+                    directives.ProxyRevalidate = true;
                 }
 
                 continue;
@@ -2662,7 +2673,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             isCompressed = true;
         }
 
-        var headers = rawHeaders.Headers;
+        var headers = new Dictionary<string, string[]>(rawHeaders.Headers, StringComparer.OrdinalIgnoreCase);
         var contentHeaders = new Dictionary<string, string[]>(originalContentHeaders, StringComparer.OrdinalIgnoreCase);
 
         var stripHeaderNames = BuildStoredHeaderStripSet(response, directives.QualifiedNoCacheHeaderNames);
@@ -2965,7 +2976,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
         public bool NoStore { get; set; }
         public bool NoCache { get; set; }
         public bool Private { get; set; }
+        public bool? Public { get; set; }
         public bool MustRevalidate { get; set; }
+        public bool? ProxyRevalidate { get; set; }
         public TimeSpan? MaxAge { get; set; }
     }
 
