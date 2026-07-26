@@ -161,6 +161,30 @@ public class ClientConditionalTests
     }
 
     [Fact]
+    public async Task Fresh_cached_response_with_non_http_date_If_Modified_Since_ignores_header()
+    {
+        var lastModified = new DateTimeOffset(2024, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        var mockHandler = new MockHttpMessageHandler(CreateCacheableResponse("cached", response =>
+        {
+            response.Content.Headers.LastModified = lastModified;
+        }));
+
+        var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        var client = fixture.CreateClient();
+
+        await client.GetAsync("https://example.com/resource", _ct);
+
+        var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.com/resource");
+        conditionalRequest.Headers.TryAddWithoutValidation("If-Modified-Since", "2024-01-02T03:04:05Z");
+
+        var response = await client.SendAsync(conditionalRequest, _ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await response.Content.ReadAsStringAsync(_ct)).ShouldBe("cached");
+        mockHandler.RequestCount.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task RFC850_If_Modified_Since_is_honored()
     {
         var lastModified = new DateTimeOffset(2024, 1, 2, 3, 4, 5, TimeSpan.Zero);

@@ -896,11 +896,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
     }
 
     private static bool TryParseHttpDate(string? value, out DateTimeOffset parsed)
-        => DateTimeOffset.TryParse(
-            value,
-            CultureInfo.InvariantCulture,
-            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-            out parsed);
+    {
+        var httpDate = string.IsNullOrWhiteSpace(value)
+            ? null
+            : HttpCacheHeaderParser.ParseSingleHttpDate([value]);
+
+        parsed = httpDate.GetValueOrDefault();
+        return httpDate.HasValue;
+    }
 
     private static bool WeakEntityTagEquals(string left, string right)
         => string.Equals(
