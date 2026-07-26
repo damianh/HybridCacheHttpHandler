@@ -48,4 +48,10 @@ internal static partial class Log
         Level = LogLevel.Warning,
         Message = "Cached content missing for key {ContentKey}, metadata is orphaned.")]
     public static partial void CachedContentMissing(this ILogger logger, string contentKey);
+
+    [LoggerMessage(
+        EventId = 8,
+        Level = LogLevel.Debug,
+        Message = "Failed to invalidate cache entries for {RequestUri}.")]
+    public static partial void CacheInvalidationFailed(this ILogger logger, Uri? requestUri, Exception exception);
 }

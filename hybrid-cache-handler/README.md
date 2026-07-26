@@ -51,6 +51,7 @@ RFC 9111 compliant client-side HTTP caching for `HttpClient`, powered by .NET's 
 
 - **Conditional Requests**: Automatic ETag (`If-None-Match`) and Last-Modified (`If-Modified-Since`) validation
 - **Vary Header Support**: Content negotiation with multiple cache entries per resource
+- **Unsafe Method Invalidation**: Invalidates cached GET/HEAD entries for the target URI (and same-origin `Location`/`Content-Location`) after successful unsafe requests like POST/PUT/DELETE
 - **Freshness Calculation**: Supports `Expires` header, `Age` header, and heuristic freshness (Last-Modified based)
 - **Stale Response Handling**: 
   - `stale-while-revalidate`: Serve stale content while updating in background

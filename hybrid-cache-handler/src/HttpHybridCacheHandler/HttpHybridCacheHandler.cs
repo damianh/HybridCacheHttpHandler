@@ -100,6 +100,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         if (request.Method != HttpMethod.Get && request.Method != HttpMethod.Head)
         {
             var response = await base.SendAsync(request, ct);
+            await InvalidateCachedResponsesForUnsafeMethodAsync(request, response, ct);
             AddDiagnosticHeaders(response, DiagnosticHeaders.ByPassMethod);
             return response;
         }
@@ -154,6 +155,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             || hasPragmaNoCache;
 
         var cacheKey2 = GenerateVaryAwareCacheKey(request);
+        var requestUriTag = GetUriTag(request.RequestUri);
         HttpResponseMessage? uncachedResponse = null;
         RawHeaderSnapshot? uncachedRawHeaders = null;
 
@@ -209,6 +211,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
                     return await SerializeResponse(uncachedResponse, rawHeaders, request);
                 },
+                tags: requestUriTag == null ? null : [requestUriTag],
                 cancellationToken: ct
             );
         }
@@ -233,7 +236,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 // Re-set with accurate TTL since GetOrCreateAsync used the global default.
                 try
                 {
-                    await _cache.SetAsync(cacheKey2, cachedResponse, CreateCacheEntryOptions(cachedResponse), cancellationToken: ct);
+                    await _cache.SetAsync(cacheKey2, cachedResponse, CreateCacheEntryOptions(cachedResponse), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
                 }
                 catch (Exception ex)
                 {
@@ -259,7 +262,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     var updatedEntry = UpdateCachedEntry(cachedResponse, uncachedResponse);
                     try
                     {
-                        await _cache.SetAsync(cacheKey2, updatedEntry, CreateCacheEntryOptions(updatedEntry), cancellationToken: ct);
+                        await _cache.SetAsync(cacheKey2, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
                     }
                     catch (Exception ex)
                     {
@@ -377,7 +380,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 var updatedEntry = UpdateCachedEntry(cachedResponse, uncachedResponse);
                 try
                 {
-                    await _cache.SetAsync(cacheKey2, updatedEntry, CreateCacheEntryOptions(updatedEntry), cancellationToken: ct);
+                    await _cache.SetAsync(cacheKey2, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
                 }
                 catch (Exception ex)
                 {
@@ -407,7 +410,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 {
                     try
                     {
-                        await _cache.SetAsync(cacheKey2, freshResponse, CreateCacheEntryOptions(freshResponse), cancellationToken: ct);
+                        await _cache.SetAsync(cacheKey2, freshResponse, CreateCacheEntryOptions(freshResponse), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
                     }
                     catch (Exception ex)
                     {
@@ -506,6 +509,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         HttpRequestMessage originalRequest,
         string cacheKey)
     {
+        var requestUriTag = GetUriTag(originalRequest.RequestUri);
         HttpRequestMessage? revalidationRequest = null;
         try
         {
@@ -520,7 +524,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 var updatedEntry = UpdateCachedEntry(cachedResponse, revalidatedResponse);
                 try
                 {
-                    await _cache.SetAsync(cacheKey, updatedEntry, CreateCacheEntryOptions(updatedEntry), cancellationToken: Ct.None);
+                    await _cache.SetAsync(cacheKey, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: Ct.None);
                 }
                 catch (Exception ex)
                 {
@@ -537,7 +541,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     {
                         try
                         {
-                            await _cache.SetAsync(cacheKey, freshResponse, CreateCacheEntryOptions(freshResponse), cancellationToken: Ct.None);
+                            await _cache.SetAsync(cacheKey, freshResponse, CreateCacheEntryOptions(freshResponse), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: Ct.None);
                         }
                         catch (Exception ex)
                         {
@@ -616,6 +620,92 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         var varyKeyPart = string.Join("|", varyParts);
         return $"{baseCacheKey}::{varyKeyPart}";
+    }
+
+    private async Task InvalidateCachedResponsesForUnsafeMethodAsync(
+        HttpRequestMessage request,
+        HttpResponseMessage response,
+        Ct ct)
+    {
+        if (!IsUnsafeMethod(request.Method)
+            || !IsNonErrorStatus(response.StatusCode)
+            || request.RequestUri == null)
+        {
+            return;
+        }
+
+        var targetUri = request.RequestUri;
+        var urisToInvalidate = new HashSet<Uri>();
+        urisToInvalidate.Add(targetUri);
+
+        var locationUri = ResolveSameOriginUri(targetUri, response.Headers.Location);
+        if (locationUri != null)
+        {
+            urisToInvalidate.Add(locationUri);
+        }
+
+        var contentLocationUri = ResolveSameOriginUri(targetUri, response.Content?.Headers.ContentLocation);
+        if (contentLocationUri != null)
+        {
+            urisToInvalidate.Add(contentLocationUri);
+        }
+
+        foreach (var uri in urisToInvalidate)
+        {
+            var uriTag = GetUriTag(uri);
+            if (uriTag == null)
+            {
+                continue;
+            }
+
+            try
+            {
+                await _cache.RemoveByTagAsync(uriTag, cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.CacheInvalidationFailed(uri, ex);
+            }
+        }
+    }
+
+    private static bool IsUnsafeMethod(HttpMethod method) =>
+        method != HttpMethod.Get
+        && method != HttpMethod.Head
+        && method != HttpMethod.Options
+        && method != HttpMethod.Trace;
+
+    private static bool IsNonErrorStatus(HttpStatusCode statusCode) =>
+        (int)statusCode is >= 200 and < 400;
+
+    private static Uri? ResolveSameOriginUri(Uri requestUri, Uri? candidate)
+    {
+        if (candidate == null)
+        {
+            return null;
+        }
+
+        var resolvedUri = candidate.IsAbsoluteUri ? candidate : new Uri(requestUri, candidate);
+        return IsSameOrigin(requestUri, resolvedUri) ? resolvedUri : null;
+    }
+
+    private static bool IsSameOrigin(Uri first, Uri second) =>
+        string.Equals(first.Scheme, second.Scheme, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(first.Host, second.Host, StringComparison.OrdinalIgnoreCase)
+        && first.Port == second.Port;
+
+    private static string? GetUriTag(Uri? uri)
+    {
+        if (uri == null || !uri.IsAbsoluteUri)
+        {
+            return null;
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Fragment = string.Empty
+        };
+        return $"httpcache:uri:{builder.Uri.AbsoluteUri}";
     }
 
     private bool IsFresh(CachedHttpMetadata cached, HttpRequestMessage request)
