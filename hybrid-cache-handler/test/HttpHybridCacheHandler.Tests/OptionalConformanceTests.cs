@@ -56,6 +56,31 @@ public class OptionalConformanceTests
     }
 
     [Fact]
+    public async Task Multiple_qualified_no_cache_directives_omit_all_listed_headers()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("cached")
+        };
+        response.Headers.TryAddWithoutValidation("Cache-Control", "max-age=3600, no-cache=\"Set-Cookie\", no-cache=\"X-Trace-Id\"");
+        response.Headers.TryAddWithoutValidation("Set-Cookie", "session=abc");
+        response.Headers.TryAddWithoutValidation("X-Trace-Id", "trace-123");
+
+        var mockHandler = new MockHttpMessageHandler(response);
+        await using var fixture = new HttpHybridCacheHandlerFixture(mockHandler);
+        using var client = fixture.CreateClient();
+
+        var originResponse = await client.GetAsync("https://example.com/multi-qualified-no-cache", _ct);
+        var cachedResponse = await client.GetAsync("https://example.com/multi-qualified-no-cache", _ct);
+
+        mockHandler.RequestCount.ShouldBe(1);
+        originResponse.Headers.Contains("Set-Cookie").ShouldBeTrue();
+        originResponse.Headers.Contains("X-Trace-Id").ShouldBeTrue();
+        cachedResponse.Headers.Contains("Set-Cookie").ShouldBeFalse();
+        cachedResponse.Headers.Contains("X-Trace-Id").ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task Shared_cache_allows_authorization_with_must_revalidate()
     {
         var response = new HttpResponseMessage(HttpStatusCode.OK)
