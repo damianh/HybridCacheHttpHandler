@@ -788,6 +788,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         if (TryCreateConditionalNotModifiedResponse(request, updatedVariant, out var conditionalNotModifiedResponse))
         {
             AddDiagnosticHeaders(conditionalNotModifiedResponse, DiagnosticHeaders.HitNotModified, updatedVariant);
+            notModifiedResponse.Dispose();
             return conditionalNotModifiedResponse;
         }
 
@@ -810,6 +811,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         ApplyAgeHeader(response, updatedVariant);
         AddDiagnosticHeaders(response, DiagnosticHeaders.HitRevalidated, updatedVariant);
+        notModifiedResponse.Dispose();
         return response;
     }
 
