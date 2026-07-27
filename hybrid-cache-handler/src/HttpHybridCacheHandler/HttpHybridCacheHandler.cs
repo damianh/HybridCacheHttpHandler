@@ -3,7 +3,6 @@
 
 using System.Buffers;
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.IO.Compression;
 using System.Net;
@@ -45,19 +44,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
     private readonly TimeProvider _timeProvider;
     private readonly HttpHybridCacheHandlerOptions _options;
     private readonly ILogger _logger;
+    private readonly FreshnessCalculator _freshnessCalculator;
+    private readonly CacheKeyGenerator _cacheKeyGenerator;
     private static readonly HashSet<string> NotModifiedContentHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
         "Content-Location",
         "Expires",
         "Last-Modified"
     };
-    private static readonly Meter Meter = new(
-        "DamianH.HttpHybridCacheHandler",
-        typeof(HttpHybridCacheHandler).Assembly.GetName().Version?.ToString() ?? "1.0.0");
-    private static readonly Counter<long> CacheHits = Meter.CreateCounter<long>(CacheHitsCounterKey, description: "Number of cache hits");
-    private static readonly Counter<long> CacheMisses = Meter.CreateCounter<long>(CacheMissesCounterKey, description: "Number of cache misses");
-    private static readonly Counter<long> CacheStale = Meter.CreateCounter<long>(CacheStaleCounterKey, description: "Number of stale cache entries served");
-    private static readonly Counter<long> CacheSizeExceeded = Meter.CreateCounter<long>(CacheSizeExceededCounterKey, description: "Number of responses exceeding max cacheable size");
     private static readonly HashSet<string> HopByHopHeaderNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "Connection",
@@ -102,6 +96,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
         _contentCache = new ContentCache(cache);
         _timeProvider = timeProvider;
         _logger = logger;
+        _freshnessCalculator = new FreshnessCalculator(_timeProvider, _options);
+        _cacheKeyGenerator = new CacheKeyGenerator(_options);
     }
 
     /// <summary>
@@ -125,6 +121,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
         _timeProvider = timeProvider;
         _options = options;
         _logger = logger;
+        _freshnessCalculator = new FreshnessCalculator(_timeProvider, _options);
+        _cacheKeyGenerator = new CacheKeyGenerator(_options);
     }
 
     /// <inheritdoc/>
@@ -263,7 +261,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 var cachedRangeResponse = await TryServeRangeFromCachedMetadataAsync(completeResponseCandidate, requestedRange, request, ct);
                 if (cachedRangeResponse != null)
                 {
-                    CacheHits.Add(1, CreateMetricTags(request));
+                    CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request));
                     AddDiagnosticHeaders(cachedRangeResponse, DiagnosticHeaders.HitFresh, completeResponseCandidate);
                     return cachedRangeResponse;
                 }
@@ -343,7 +341,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             uncachedResponse ??= await base.SendAsync(request, ct);
             RestoreRawHeaders(uncachedResponse, uncachedRawHeaders);
             AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
-            CacheMisses.Add(1, CreateMetricTags(request));
+            CacheMetrics.CacheMisses.Add(1, CacheMetrics.CreateMetricTags(request));
             return uncachedResponse;
         }
 
@@ -364,7 +362,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 }
                 RestoreRawHeaders(uncachedResponse, uncachedRawHeaders);
                 AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.Miss);
-                CacheMisses.Add(1, CreateMetricTags(request));
+                CacheMetrics.CacheMisses.Add(1, CacheMetrics.CreateMetricTags(request));
                 return uncachedResponse;
             }
 
@@ -393,7 +391,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     }
 
                     RestoreRawHeaders(variantMissResponse, variantMissRawHeaders);
-                    CacheMisses.Add(1, CreateMetricTags(request));
+                    CacheMetrics.CacheMisses.Add(1, CacheMetrics.CreateMetricTags(request));
                     AddDiagnosticHeaders(variantMissResponse, DiagnosticHeaders.Miss);
                     return variantMissResponse;
                 }
@@ -430,7 +428,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                                 ct);
                         }
 
-                        CacheMisses.Add(1, CreateMetricTags(request));
+                        CacheMetrics.CacheMisses.Add(1, CacheMetrics.CreateMetricTags(request));
                         RestoreRawHeaders(variantMissResponse, variantMissRawHeaders);
                         AddDiagnosticHeaders(variantMissResponse, DiagnosticHeaders.MissRevalidated);
                         return variantMissResponse;
@@ -478,7 +476,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     }
                 }
 
-                CacheMisses.Add(1, CreateMetricTags(request));
+                CacheMetrics.CacheMisses.Add(1, CacheMetrics.CreateMetricTags(request));
                 RestoreRawHeaders(uncachedResponse, validationRawHeaders);
                 AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissRevalidated);
                 return uncachedResponse;
@@ -508,7 +506,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
                     RestoreRawHeaders(partialBypassResponse, partialBypassRawHeaders);
                     AddDiagnosticHeaders(partialBypassResponse, DiagnosticHeaders.Miss);
-                    CacheMisses.Add(1, CreateMetricTags(request));
+                    CacheMetrics.CacheMisses.Add(1, CacheMetrics.CreateMetricTags(request));
                     return partialBypassResponse;
                 }
 
@@ -517,20 +515,20 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     var rangeResponse = await TryServeRangeFromCachedMetadataAsync(cachedResponse, requestedRange, request, ct);
                     if (rangeResponse != null)
                     {
-                        CacheHits.Add(1, CreateMetricTags(request));
+                        CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request));
                         AddDiagnosticHeaders(rangeResponse, DiagnosticHeaders.HitFresh, cachedResponse);
                         return rangeResponse;
                     }
 
                     var unsatisfiedRangeResponse = await base.SendAsync(request, ct);
                     AddDiagnosticHeaders(unsatisfiedRangeResponse, DiagnosticHeaders.Miss);
-                    CacheMisses.Add(1, CreateMetricTags(request));
+                    CacheMetrics.CacheMisses.Add(1, CacheMetrics.CreateMetricTags(request));
                     return unsatisfiedRangeResponse;
                 }
 
                 if (TryCreateConditionalNotModifiedResponse(request, cachedResponse, out var notModifiedResponse))
                 {
-                    CacheHits.Add(1, CreateMetricTags(request));
+                    CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request));
                     AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, cachedResponse);
                     return notModifiedResponse;
                 }
@@ -542,11 +540,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     await _cache.RemoveAsync(cacheKey2, ct);
                     var freshResponse = await base.SendAsync(request, ct);
                     AddDiagnosticHeaders(freshResponse, DiagnosticHeaders.MissCacheError);
-                    CacheMisses.Add(1, CreateMetricTags(request));
+                    CacheMetrics.CacheMisses.Add(1, CacheMetrics.CreateMetricTags(request));
                     return freshResponse;
                 }
                 ApplyAgeHeader(response, cachedResponse);
-                CacheHits.Add(1, CreateMetricTags(request));
+                CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request));
                 AddDiagnosticHeaders(response, DiagnosticHeaders.HitFresh, cachedResponse);
                 return response;
             }
@@ -568,8 +566,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         // Trigger background revalidation
                         _ = Task.Run(() => BackgroundRevalidateAsync(cachedEntry, cachedResponse, request, cacheKey2));
 
-                        CacheHits.Add(1, CreateMetricTags(request)); // Count as hit (stale-while-revalidate)
-                        CacheStale.Add(1, CreateMetricTags(request));
+                        CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request)); // Count as hit (stale-while-revalidate)
+                        CacheMetrics.CacheStale.Add(1, CacheMetrics.CreateMetricTags(request));
                         return notModifiedResponse;
                     }
 
@@ -581,7 +579,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         await _cache.RemoveAsync(cacheKey2, ct);
                         var freshResponse = await base.SendAsync(request, ct);
                         AddDiagnosticHeaders(freshResponse, DiagnosticHeaders.MissCacheError);
-                        CacheMisses.Add(1, CreateMetricTags(request));
+                        CacheMetrics.CacheMisses.Add(1, CacheMetrics.CreateMetricTags(request));
                         return freshResponse;
                     }
                     ApplyAgeHeader(staleResponse, cachedResponse);
@@ -590,8 +588,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     // Trigger background revalidation
                     _ = Task.Run(() => BackgroundRevalidateAsync(cachedEntry, cachedResponse, request, cacheKey2));
 
-                    CacheHits.Add(1, CreateMetricTags(request)); // Count as hit (stale-while-revalidate)
-                    CacheStale.Add(1, CreateMetricTags(request));
+                    CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request)); // Count as hit (stale-while-revalidate)
+                    CacheMetrics.CacheStale.Add(1, CacheMetrics.CreateMetricTags(request));
                     return staleResponse;
                 }
             }
@@ -611,8 +609,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             {
                 if (CanServeStaleOnError(cachedResponse, stalenessForValidation))
                 {
-                    CacheHits.Add(1, CreateMetricTags(request));
-                    CacheStale.Add(1, CreateMetricTags(request));
+                    CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request));
+                    CacheMetrics.CacheStale.Add(1, CacheMetrics.CreateMetricTags(request));
                     var staleResponse = await DeserializeResponseAsync(cachedResponse, ct);
                     if (staleResponse == null)
                     {
@@ -630,8 +628,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             if ((int)uncachedResponse.StatusCode >= 500 &&
                 CanServeStaleOnError(cachedResponse, stalenessForValidation))
             {
-                CacheHits.Add(1, CreateMetricTags(request)); // Count as hit (stale on error)
-                CacheStale.Add(1, CreateMetricTags(request));
+                CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request)); // Count as hit (stale on error)
+                CacheMetrics.CacheStale.Add(1, CacheMetrics.CreateMetricTags(request));
                 var response = await DeserializeResponseAsync(cachedResponse, ct);
                 if (response == null)
                 {
@@ -715,7 +713,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.Miss);
-        CacheMisses.Add(1, CreateMetricTags(request));
+        CacheMetrics.CacheMisses.Add(1, CacheMetrics.CreateMetricTags(request));
         return uncachedResponse;
     }
 
@@ -784,7 +782,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             _logger.CacheWriteFailed(request.RequestUri, ex);
         }
 
-        CacheHits.Add(1, CreateMetricTags(request));
+        CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request));
         if (TryCreateConditionalNotModifiedResponse(request, updatedVariant, out var conditionalNotModifiedResponse))
         {
             AddDiagnosticHeaders(conditionalNotModifiedResponse, DiagnosticHeaders.HitNotModified, updatedVariant);
@@ -1410,47 +1408,13 @@ public class HttpHybridCacheHandler : DelegatingHandler
     }
 
     private string NormalizeRangeHeader(RangeHeaderValue rangeHeader)
-    {
-        if (string.Equals(rangeHeader.Unit, "bytes", StringComparison.OrdinalIgnoreCase) &&
-            rangeHeader.Ranges.Count == 1)
-        {
-            var item = rangeHeader.Ranges.First();
-            return $"bytes={item.From?.ToString() ?? string.Empty}-{item.To?.ToString() ?? string.Empty}";
-        }
-
-        return rangeHeader.ToString();
-    }
+        => _cacheKeyGenerator.NormalizeRangeHeader(rangeHeader);
 
     private string GenerateVaryAwareCacheKey(
         HttpRequestMessage request,
         HttpMethod? cacheMethod = null,
         bool includeRange = false)
-    {
-        var baseCacheKey = $"{cacheMethod ?? request.Method}:{request.RequestUri}";
-
-        // For Vary support: Include configured or default Vary headers in the key
-        var varyParts = new List<string>();
-        foreach (var h in _options.VaryHeaders)
-        {
-            if (request.Headers.TryGetValues(h, out var values))
-            {
-                var normalized = NormalizeHeaderValues(values);
-                varyParts.Add($"{h}:{normalized}");
-            }
-            else
-            {
-                varyParts.Add($"{h}:");
-            }
-        }
-
-        if (includeRange && request.Headers.Range != null)
-        {
-            varyParts.Add($"Range:{NormalizeRangeHeader(request.Headers.Range)}");
-        }
-
-        var varyKeyPart = string.Join("|", varyParts);
-        return $"{baseCacheKey}::{varyKeyPart}";
-    }
+        => _cacheKeyGenerator.GenerateVaryAwareCacheKey(request, cacheMethod, includeRange);
 
     private static void NormalizeIfNoneMatchHeader(HttpRequestMessage request)
     {
@@ -1474,8 +1438,13 @@ public class HttpHybridCacheHandler : DelegatingHandler
         request.Headers.TryAddWithoutValidation("If-None-Match", string.Join(", ", normalized));
     }
 
+    private bool MatchesStoredVaryHeaders(CachedHttpMetadata cachedResponse, HttpRequestMessage request)
+        => _cacheKeyGenerator.MatchesStoredVaryHeaders(cachedResponse, request);
+
+    private static string GetNormalizedHeaderValue(HttpRequestMessage request, string headerName)
+        => CacheKeyGenerator.GetNormalizedHeaderValue(request, headerName);
     private static string NormalizeHeaderValues(IEnumerable<string> values)
-        => VaryMatcher.NormalizeHeaderValue(values);
+        => CacheKeyGenerator.NormalizeHeaderValues(values);
 
     private bool TryCreateConditionalNotModifiedResponse(
         HttpRequestMessage request,
@@ -1801,162 +1770,22 @@ public class HttpHybridCacheHandler : DelegatingHandler
     }
 
     private bool IsFresh(CachedHttpMetadata cached, HttpRequestMessage request)
-    {
-        var freshnessLifetime = CalculateFreshnessLifetime(cached);
-        if (freshnessLifetime == null)
-        {
-            return false;
-        }
-
-        var currentAge = CalculateCurrentAge(cached);
-        var requestCacheControl = request.Headers.CacheControl;
-
-        // RFC 9111 Section 5.2.1.1: max-age request directive
-        if (requestCacheControl?.MaxAge is TimeSpan requestMaxAge && currentAge > requestMaxAge)
-        {
-            return false;
-        }
-
-        var remainingFreshness = freshnessLifetime.Value - currentAge;
-
-        // RFC 7234 Section 5.2.1.4: min-fresh
-        // The min-fresh request directive indicates that the client is willing to
-        // accept a response whose freshness lifetime is no less than its current
-        // age plus the specified time (in seconds).
-        var minFresh = requestCacheControl?.MinFresh;
-        if (minFresh.HasValue)
-        {
-            // Response must have at least min-fresh seconds of remaining freshness
-            if (remainingFreshness < minFresh.Value)
-            {
-                return false;
-            }
-        }
-
-        if (currentAge < freshnessLifetime.Value)
-        {
-            return true;
-        }
-
-        // RFC 9111 Section 5.2.1.2: max-stale request directive
-        if (requestCacheControl?.MaxStale == true &&
-            !cached.MustRevalidate &&
-            !cached.NoCache)
-        {
-            var staleness = currentAge - freshnessLifetime.Value;
-            var maxStaleLimit = requestCacheControl.MaxStaleLimit ?? TimeSpan.MaxValue;
-            return staleness <= maxStaleLimit;
-        }
-
-        return false;
-    }
+        => _freshnessCalculator.IsFresh(cached, request);
 
     private TimeSpan? CalculateFreshnessLifetime(CachedHttpMetadata cached)
-    {
-        // Cache mode determines which max-age to prefer
-        if (_options.Mode == CacheMode.Shared)
-        {
-            // Shared cache: Prefer s-maxage (from CacheControl.SharedMaxAge) over max-age
-            // Note: MaxAge property may contain s-maxage if it was set during response parsing
-            if (cached.MaxAge.HasValue)
-            {
-                return cached.MaxAge.Value;
-            }
-        }
-        else // CacheMode.Private
-        {
-            // Private cache: Use max-age only (ignore s-maxage)
-            if (cached.MaxAge.HasValue)
-            {
-                return cached.MaxAge.Value;
-            }
-        }
-
-        // Expires header
-        if (cached.Expires.HasValue)
-        {
-            var responseTime = cached.Date ?? cached.CachedAt;
-            var lifetime = cached.Expires.Value - responseTime;
-            return lifetime > TimeSpan.Zero ? lifetime : TimeSpan.Zero;
-        }
-
-        // Heuristic freshness (RFC 7234 Section 4.2.2)
-        if (cached.LastModified.HasValue)
-        {
-            var responseTime = cached.Date ?? cached.CachedAt;
-            var timeSinceModified = responseTime - cached.LastModified.Value;
-            if (timeSinceModified > TimeSpan.Zero)
-            {
-                var heuristicLifetime = TimeSpan.FromSeconds(timeSinceModified.TotalSeconds * _options.HeuristicFreshnessPercent);
-                return heuristicLifetime < _options.HeuristicFreshnessMinimum
-                    ? _options.HeuristicFreshnessMinimum
-                    : heuristicLifetime;
-            }
-        }
-
-        return null;
-    }
+        => _freshnessCalculator.CalculateFreshnessLifetime(cached);
 
     private TimeSpan CalculateCurrentAge(CachedHttpMetadata cached)
-    {
-        // Age when received
-        var ageValue = cached.IgnoreStoredAge ? TimeSpan.Zero : cached.Age ?? TimeSpan.Zero;
-
-        // Apparent age based on Date header
-        var apparentAge = TimeSpan.Zero;
-        if (cached.Date.HasValue)
-        {
-            apparentAge = cached.CachedAt - cached.Date.Value;
-            if (apparentAge < TimeSpan.Zero)
-            {
-                apparentAge = TimeSpan.Zero;
-            }
-        }
-
-        var correctedReceivedAge = ageValue > apparentAge ? ageValue : apparentAge;
-
-        // Resident time = time since cached
-        var residentTime = _timeProvider.GetUtcNow() - cached.CachedAt;
-
-        return correctedReceivedAge + residentTime;
-    }
+        => _freshnessCalculator.CalculateCurrentAge(cached);
 
     private TimeSpan CalculateStaleness(CachedHttpMetadata cachedResponse)
-    {
-        var freshnessLifetime = CalculateFreshnessLifetime(cachedResponse) ?? TimeSpan.Zero;
-        var age = CalculateCurrentAge(cachedResponse);
-        return age - freshnessLifetime;
-    }
+        => _freshnessCalculator.CalculateStaleness(cachedResponse);
 
     private static bool CanServeStaleOnTransportFailure(Exception ex, CancellationToken cancellationToken)
-    {
-        if (cancellationToken.IsCancellationRequested)
-        {
-            return false;
-        }
-
-        return ex is HttpRequestException or IOException;
-    }
+        => FreshnessCalculator.CanServeStaleOnTransportFailure(ex, cancellationToken);
 
     private static bool CanServeStaleOnError(CachedHttpMetadata cachedResponse, TimeSpan staleness)
-    {
-        if (cachedResponse.MustRevalidate || cachedResponse.ProxyRevalidate || cachedResponse.NoCache)
-        {
-            return false;
-        }
-
-        if (cachedResponse.HasSharedMaxAge)
-        {
-            return false;
-        }
-
-        if (cachedResponse.StaleIfError.HasValue)
-        {
-            return staleness <= cachedResponse.StaleIfError.Value;
-        }
-
-        return true;
-    }
+        => FreshnessCalculator.CanServeStaleOnError(cachedResponse, staleness);
 
     private EffectiveCacheDirectives GetEffectiveCacheDirectives(HttpResponseMessage response)
     {
@@ -2436,35 +2265,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
     }
 
     private TimeSpan CalculateEntryLifetime(CachedHttpMetadata metadata)
-    {
-        var total = CalculateSemanticLifetime(metadata);
-
-        // Ensure a minimum TTL so that very short-lived entries don't disappear
-        // before the handler can check freshness on the next request.
-        if (total < TimeSpan.FromSeconds(30))
-        {
-            total = TimeSpan.FromSeconds(30);
-        }
-
-        return total;
-    }
+        => _freshnessCalculator.CalculateEntryLifetime(metadata);
 
     private TimeSpan CalculateSemanticLifetime(CachedHttpMetadata metadata)
-    {
-        var freshness = CalculateFreshnessLifetime(metadata) ?? TimeSpan.Zero;
-
-        var total = freshness;
-        if (metadata.StaleWhileRevalidate.HasValue)
-        {
-            total += metadata.StaleWhileRevalidate.Value;
-        }
-        if (metadata.StaleIfError.HasValue)
-        {
-            total += metadata.StaleIfError.Value;
-        }
-
-        return total;
-    }
+        => _freshnessCalculator.CalculateSemanticLifetime(metadata);
 
     private async Task<CachedHttpEntry?> GetCacheEntryAsync(string cacheKey, Ct cancellationToken) =>
         await _cache.GetOrCreateAsync<CachedHttpEntry?>(
@@ -2630,7 +2434,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             {
                 if (request != null)
                 {
-                    CacheSizeExceeded.Add(1, CreateMetricTags(request));
+                    CacheMetrics.CacheSizeExceeded.Add(1, CacheMetrics.CreateMetricTags(request));
                 }
                 return false;
             }
@@ -2758,7 +2562,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         {
             if (request != null)
             {
-                CacheSizeExceeded.Add(1, CreateMetricTags(request));
+                CacheMetrics.CacheSizeExceeded.Add(1, CacheMetrics.CreateMetricTags(request));
             }
             return null;
         }
@@ -2790,7 +2594,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     }
                     if (request != null)
                     {
-                        CacheSizeExceeded.Add(1, CreateMetricTags(request));
+                        CacheMetrics.CacheSizeExceeded.Add(1, CacheMetrics.CreateMetricTags(request));
                     }
                     return null;
                 }
@@ -3119,16 +2923,4 @@ public class HttpHybridCacheHandler : DelegatingHandler
         bool HasSharedMaxAge,
         string[] QualifiedNoCacheHeaderNames,
         bool IgnoreStoredAge);
-
-    private static TagList CreateMetricTags(HttpRequestMessage request)
-    {
-        var uri = request.RequestUri;
-        return new TagList
-        {
-            { "http.request.method", request.Method.Method },
-            { "url.scheme", uri?.Scheme ?? "unknown" },
-            { "server.address", uri?.Host ?? "unknown" },
-            { "server.port", uri?.Port ?? 0 }
-        };
-    }
 }
