@@ -501,7 +501,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
                             request,
                             (current, variant) => ReplaceVariant(current, cachedResponse, variant),
                             request.RequestUri,
-                            ct);
+                            ct,
+                            mergeWithLatest: false);
                     }
 
                     RestoreRawHeaders(partialBypassResponse, partialBypassRawHeaders);
@@ -726,7 +727,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
         HttpRequestMessage serializationRequest,
         Func<CachedHttpEntry, CachedHttpMetadata, CachedHttpEntry> updateEntry,
         Uri? requestUri,
-        Ct ct)
+        Ct ct,
+        bool mergeWithLatest = true)
     {
         var variant = await SerializeResponse(response, rawHeaders, serializationRequest);
         if (variant == null)
@@ -736,12 +738,25 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         try
         {
-            await SetMergedEntryAsync(
-                cacheKey,
-                requestUriTag,
-                fallbackEntry,
-                current => updateEntry(current, variant),
-                ct);
+            if (mergeWithLatest)
+            {
+                await SetMergedEntryAsync(
+                    cacheKey,
+                    requestUriTag,
+                    fallbackEntry,
+                    current => updateEntry(current, variant),
+                    ct);
+            }
+            else
+            {
+                var updatedEntry = updateEntry(fallbackEntry, variant);
+                await _cache.SetAsync(
+                    cacheKey,
+                    updatedEntry,
+                    CreateCacheEntryOptions(updatedEntry),
+                    tags: requestUriTag == null ? null : [requestUriTag],
+                    cancellationToken: ct);
+            }
         }
         catch (Exception ex)
         {
