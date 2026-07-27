@@ -380,23 +380,16 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     var variantMissRawHeaders = CaptureRawHeaders(variantMissResponse);
                     if (IsResponseCacheable(variantMissResponse, request))
                     {
-                        var freshVariant = await SerializeResponse(variantMissResponse, variantMissRawHeaders, request);
-                        if (freshVariant != null)
-                        {
-                            try
-                            {
-                                await SetMergedEntryAsync(
-                                    cacheKey2,
-                                    requestUriTag,
-                                    cachedEntry,
-                                    current => UpsertVariant(current, freshVariant),
-                                    ct);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.CacheWriteFailed(request.RequestUri, ex);
-                            }
-                        }
+                        await TryStoreVariantAsync(
+                            cacheKey2,
+                            requestUriTag,
+                            cachedEntry,
+                            variantMissResponse,
+                            variantMissRawHeaders,
+                            request,
+                            (current, variant) => UpsertVariant(current, variant),
+                            request.RequestUri,
+                            ct);
                     }
 
                     RestoreRawHeaders(variantMissResponse, variantMissRawHeaders);
@@ -425,23 +418,16 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         var variantMissRawHeaders = CaptureRawHeaders(variantMissResponse);
                         if (IsResponseCacheable(variantMissResponse, request))
                         {
-                            var freshVariant = await SerializeResponse(variantMissResponse, variantMissRawHeaders, request);
-                            if (freshVariant != null)
-                            {
-                                try
-                                {
-                                    await SetMergedEntryAsync(
-                                        cacheKey2,
-                                        requestUriTag,
-                                        cachedEntry,
-                                        current => UpsertVariant(current, freshVariant),
-                                        ct);
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.CacheWriteFailed(request.RequestUri, ex);
-                                }
-                            }
+                            await TryStoreVariantAsync(
+                                cacheKey2,
+                                requestUriTag,
+                                cachedEntry,
+                                variantMissResponse,
+                                variantMissRawHeaders,
+                                request,
+                                (current, variant) => UpsertVariant(current, variant),
+                                request.RequestUri,
+                                ct);
                         }
 
                         CacheMisses.Add(1, CreateMetricTags(request));
@@ -450,76 +436,31 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         return variantMissResponse;
                     }
 
-                    if (!validationUsesStoredValidator)
-                    {
-                        RestoreRawHeaders(uncachedResponse, validationRawHeaders);
-                        AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissRevalidated);
-                        return uncachedResponse;
-                    }
-
-                    var updatedVariant = UpdateCachedEntry(cachedResponse, uncachedResponse);
-                    try
-                    {
-                        await SetMergedEntryAsync(
-                            cacheKey2,
-                            requestUriTag,
-                            cachedEntry,
-                            current => ReplaceVariant(current, cachedResponse, updatedVariant),
-                            ct);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.CacheWriteFailed(request.RequestUri, ex);
-                    }
-
-                    CacheHits.Add(1, CreateMetricTags(request));
-                    if (TryCreateConditionalNotModifiedResponse(request, updatedVariant, out var notModifiedResponse))
-                    {
-                        AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, updatedVariant);
-                        return notModifiedResponse;
-                    }
-
-                    var response = await DeserializeResponseAsync(updatedVariant, ct);
-                    if (response == null)
-                    {
-                        await RemoveVariantFromEntryAsync(
-                            cacheKey2,
-                            requestUriTag,
-                            cachedEntry,
-                            updatedVariant,
-                            request.RequestUri,
-                            ct);
-
-                        // Content missing, return fresh response
-                        RestoreRawHeaders(uncachedResponse, validationRawHeaders);
-                        AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
-                        return uncachedResponse;
-                    }
-                    ApplyAgeHeader(response, updatedVariant);
-                    AddDiagnosticHeaders(response, DiagnosticHeaders.HitRevalidated, updatedVariant);
-                    return response;
+                    return await HandleNotModifiedAsync(
+                        request,
+                        cacheKey2,
+                        requestUriTag,
+                        cachedEntry,
+                        cachedResponse,
+                        uncachedResponse,
+                        validationRawHeaders,
+                        validationUsesStoredValidator,
+                        ct);
                 }
 
                 // Got a new response, update the cached entry if cacheable
                 if (IsResponseCacheable(uncachedResponse, validationRequest))
                 {
-                    var freshResponse = await SerializeResponse(uncachedResponse, validationRawHeaders, validationRequest);
-                    if (freshResponse != null)
-                    {
-                        try
-                        {
-                            await SetMergedEntryAsync(
-                                cacheKey2,
-                                requestUriTag,
-                                cachedEntry,
-                                current => UpsertVariant(current, freshResponse),
-                                ct);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.CacheWriteFailed(request.RequestUri, ex);
-                        }
-                    }
+                    await TryStoreVariantAsync(
+                        cacheKey2,
+                        requestUriTag,
+                        cachedEntry,
+                        uncachedResponse,
+                        validationRawHeaders,
+                        validationRequest,
+                        (current, variant) => UpsertVariant(current, variant),
+                        request.RequestUri,
+                        ct);
                 }
                 else
                 {
@@ -553,19 +494,16 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
                     if (IsResponseCacheable(partialBypassResponse, request))
                     {
-                        var replacement = await SerializeResponse(partialBypassResponse, partialBypassRawHeaders, request);
-                        if (replacement != null)
-                        {
-                            try
-                            {
-                                var replacementEntry = ReplaceVariant(cachedEntry, cachedResponse, replacement);
-                                await _cache.SetAsync(cacheKey2, replacementEntry, CreateCacheEntryOptions(replacementEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.CacheWriteFailed(request.RequestUri, ex);
-                            }
-                        }
+                        await TryStoreVariantAsync(
+                            cacheKey2,
+                            requestUriTag,
+                            cachedEntry,
+                            partialBypassResponse,
+                            partialBypassRawHeaders,
+                            request,
+                            (current, variant) => ReplaceVariant(current, cachedResponse, variant),
+                            request.RequestUri,
+                            ct);
                     }
 
                     RestoreRawHeaders(partialBypassResponse, partialBypassRawHeaders);
@@ -708,81 +646,32 @@ public class HttpHybridCacheHandler : DelegatingHandler
             // Handle 304 Not Modified
             if (uncachedResponse.StatusCode == HttpStatusCode.NotModified)
             {
-                if (!staleValidationUsesStoredValidator)
-                {
-                    RestoreRawHeaders(uncachedResponse, staleValidationRawHeaders);
-                    AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissRevalidated);
-                    return uncachedResponse;
-                }
-
-                // Update cached entry with new metadata from 304 response
-                var updatedVariant = UpdateCachedEntry(cachedResponse, uncachedResponse);
-                try
-                {
-                    await SetMergedEntryAsync(
-                        cacheKey2,
-                        requestUriTag,
-                        cachedEntry,
-                        current => ReplaceVariant(current, cachedResponse, updatedVariant),
-                        ct);
-                }
-                catch (Exception ex)
-                {
-                    // Cache write failure - ignore, still return the response
-                    _logger.CacheWriteFailed(request.RequestUri, ex);
-                }
-
-                CacheHits.Add(1, CreateMetricTags(request)); // Count as hit (revalidated)
-                if (TryCreateConditionalNotModifiedResponse(request, updatedVariant, out var notModifiedResponse))
-                {
-                    AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, updatedVariant);
-                    return notModifiedResponse;
-                }
-
-                // Return cached body with updated metadata
-                var response = await DeserializeResponseAsync(updatedVariant, ct);
-                if (response == null)
-                {
-                    await RemoveVariantFromEntryAsync(
-                        cacheKey2,
-                        requestUriTag,
-                        cachedEntry,
-                        updatedVariant,
-                        request.RequestUri,
-                        ct);
-
-                    // Content missing - return fresh response
-                    RestoreRawHeaders(uncachedResponse, staleValidationRawHeaders);
-                    AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.MissCacheError);
-                    return uncachedResponse;
-                }
-                ApplyAgeHeader(response, updatedVariant);
-                AddDiagnosticHeaders(response, DiagnosticHeaders.HitRevalidated, updatedVariant);
-                return response;
+                return await HandleNotModifiedAsync(
+                    request,
+                    cacheKey2,
+                    requestUriTag,
+                    cachedEntry,
+                    cachedResponse,
+                    uncachedResponse,
+                    staleValidationRawHeaders,
+                    staleValidationUsesStoredValidator,
+                    ct);
             }
 
             // Resource changed (200 or other status) - update cache if cacheable
             var revalidatedDirectives = GetEffectiveCacheDirectives(uncachedResponse);
             if (IsResponseCacheable(uncachedResponse, staleValidationRequest, revalidatedDirectives))
             {
-                var freshResponse = await SerializeResponse(uncachedResponse, staleValidationRawHeaders, staleValidationRequest);
-                if (freshResponse != null)
-                {
-                    try
-                    {
-                        await SetMergedEntryAsync(
-                            cacheKey2,
-                            requestUriTag,
-                            cachedEntry,
-                            current => UpsertVariant(current, freshResponse),
-                            ct);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Cache write failure - ignore, still return the response
-                        _logger.CacheWriteFailed(request.RequestUri, ex);
-                    }
-                }
+                await TryStoreVariantAsync(
+                    cacheKey2,
+                    requestUriTag,
+                    cachedEntry,
+                    uncachedResponse,
+                    staleValidationRawHeaders,
+                    staleValidationRequest,
+                    (current, variant) => UpsertVariant(current, variant),
+                    request.RequestUri,
+                    ct);
             }
             else
             {
@@ -828,6 +717,100 @@ public class HttpHybridCacheHandler : DelegatingHandler
         AddDiagnosticHeaders(uncachedResponse, DiagnosticHeaders.Miss);
         CacheMisses.Add(1, CreateMetricTags(request));
         return uncachedResponse;
+    }
+
+    private async Task TryStoreVariantAsync(
+        string cacheKey,
+        string? requestUriTag,
+        CachedHttpEntry fallbackEntry,
+        HttpResponseMessage response,
+        RawHeaderSnapshot rawHeaders,
+        HttpRequestMessage serializationRequest,
+        Func<CachedHttpEntry, CachedHttpMetadata, CachedHttpEntry> updateEntry,
+        Uri? requestUri,
+        Ct ct)
+    {
+        var variant = await SerializeResponse(response, rawHeaders, serializationRequest);
+        if (variant == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await SetMergedEntryAsync(
+                cacheKey,
+                requestUriTag,
+                fallbackEntry,
+                current => updateEntry(current, variant),
+                ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.CacheWriteFailed(requestUri, ex);
+        }
+    }
+
+    private async Task<HttpResponseMessage> HandleNotModifiedAsync(
+        HttpRequestMessage request,
+        string cacheKey,
+        string? requestUriTag,
+        CachedHttpEntry cachedEntry,
+        CachedHttpMetadata cachedResponse,
+        HttpResponseMessage notModifiedResponse,
+        RawHeaderSnapshot notModifiedRawHeaders,
+        bool usedStoredValidator,
+        Ct ct)
+    {
+        if (!usedStoredValidator)
+        {
+            RestoreRawHeaders(notModifiedResponse, notModifiedRawHeaders);
+            AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.MissRevalidated);
+            return notModifiedResponse;
+        }
+
+        var updatedVariant = UpdateCachedEntry(cachedResponse, notModifiedResponse);
+        try
+        {
+            await SetMergedEntryAsync(
+                cacheKey,
+                requestUriTag,
+                cachedEntry,
+                current => ReplaceVariant(current, cachedResponse, updatedVariant),
+                ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.CacheWriteFailed(request.RequestUri, ex);
+        }
+
+        CacheHits.Add(1, CreateMetricTags(request));
+        if (TryCreateConditionalNotModifiedResponse(request, updatedVariant, out var conditionalNotModifiedResponse))
+        {
+            AddDiagnosticHeaders(conditionalNotModifiedResponse, DiagnosticHeaders.HitNotModified, updatedVariant);
+            return conditionalNotModifiedResponse;
+        }
+
+        var response = await DeserializeResponseAsync(updatedVariant, ct);
+        if (response == null)
+        {
+            await RemoveVariantFromEntryAsync(
+                cacheKey,
+                requestUriTag,
+                cachedEntry,
+                updatedVariant,
+                request.RequestUri,
+                ct);
+
+            // Content missing, return origin response used for revalidation.
+            RestoreRawHeaders(notModifiedResponse, notModifiedRawHeaders);
+            AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.MissCacheError);
+            return notModifiedResponse;
+        }
+
+        ApplyAgeHeader(response, updatedVariant);
+        AddDiagnosticHeaders(response, DiagnosticHeaders.HitRevalidated, updatedVariant);
+        return response;
     }
 
     private CachedHttpMetadata UpdateCachedEntry(CachedHttpMetadata cached, HttpResponseMessage notModifiedResponse)
