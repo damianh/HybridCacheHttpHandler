@@ -1,0 +1,93 @@
+name: release-template
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: "Lib folder name (e.g. signatures)"
+        required: true
+        type: string
+      package:
+        description: "NuGet package ID (e.g. DamianH.Http.HttpSignatures)"
+        required: true
+        type: string
+      tag-prefix:
+        description: "Git tag prefix (e.g. sig-v)"
+        required: true
+        type: string
+      version:
+        description: "Version number (x.y.z or x.y.z-prerelease.1)"
+        required: true
+        type: string
+    secrets:
+      NUGET_ORG_APIKEY:
+        required: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    environment: nuget.org
+    permissions:
+      contents: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Validate version format
+        run: |
+          if ! echo "${{ inputs.version }}" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+\.[0-9]+)?$'; then
+            echo "Invalid version format. Expected: x.y.z or x.y.z-prerelease.1"
+            exit 1
+          fi
+
+      - name: Remove existing tag if present
+        run: |
+          TAG="${{ inputs.tag-prefix }}${{ inputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG exists, removing it"
+            git tag -d "$TAG"
+            git push origin ":refs/tags/$TAG" || true
+          fi
+
+      - name: Create and push tag
+        run: |
+          TAG="${{ inputs.tag-prefix }}${{ inputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release ${{ inputs.package }} ${{ inputs.version }}"
+          git push origin "$TAG"
+
+      - name: Pack NuGet package
+        # Runs after tagging so MinVer derives the package version from the new tag.
+        run: dotnet run ${{ inputs.product }}/build.cs -- pack
+
+      - name: Push to NuGet.org
+        run: |
+          dotnet nuget push "${{ inputs.product }}/artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_ORG_APIKEY }} --skip-duplicate
+
+      - name: Upload packages as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages-${{ inputs.package }}-${{ inputs.version }}
+          path: ${{ inputs.product }}/artifacts/*.nupkg
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag-prefix }}${{ inputs.version }}
+          name: ${{ inputs.package }} ${{ inputs.version }}
+          draft: false
+          prerelease: ${{ contains(inputs.version, '-') }}
+          generate_release_notes: true

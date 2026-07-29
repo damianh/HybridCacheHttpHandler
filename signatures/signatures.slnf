@@ -1,0 +1,9 @@
+{
+  "solution": {
+    "path": "..\\http-lib.slnx",
+    "projects": [
+      "signatures\\src\\Http.HttpSignatures\\Http.HttpSignatures.csproj",
+      "signatures\\test\\Http.HttpSignatures.Tests\\Http.HttpSignatures.Tests.csproj"
+    ]
+  }
+}

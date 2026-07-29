@@ -1,0 +1,71 @@
+name: ci-template
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: "Lib folder name (e.g. signatures, structured-field-values)"
+        required: true
+        type: string
+      test-targets:
+        description: 'JSON array of build.cs test targets (e.g. ["test"]). Empty array or "[]" to skip.'
+        required: false
+        type: string
+        default: '["test"]'
+      os-matrix:
+        description: 'JSON array of OS runners for the test job. Defaults to ubuntu only.'
+        required: false
+        type: string
+        default: '["ubuntu-latest"]'
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build
+        run: dotnet run ${{ inputs.product }}/build.cs -- build
+
+  test:
+    name: "Test: ${{ matrix.target }} (${{ matrix.os }})"
+    if: inputs.test-targets != '[]'
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        target: ${{ fromJson(inputs.test-targets) }}
+        os: ${{ fromJson(inputs.os-matrix) }}
+      fail-fast: false
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test
+        run: dotnet run ${{ inputs.product }}/build.cs -- ${{ matrix.target }}
+      - name: Test report
+        if: success() || failure()
+        uses: phoenix-actions/test-reporting@f957cd93fc2d848d556fa0d03c57bc79127b6b5e
+        with:
+          name: "${{ inputs.product }}: ${{ matrix.target }} (${{ matrix.os }})"
+          path: "**/*-tests.trx"
+          reporter: dotnet-trx
+          output-to: step-summary
+          fail-on-error: true

@@ -1,9 +1,9 @@
 # http-libs
 
-[![CI](https://github.com/damianh/http-hybridcache-handler/actions/workflows/ci.yml/badge.svg)](https://github.com/damianh/http-hybridcache-handler/actions/workflows/ci.yml)
+[![CI](https://github.com/damianh/http-libs/actions/workflows/hybrid-cache-handler-ci.yml/badge.svg)](https://github.com/damianh/http-libs/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
-[![GitHub Stars](https://img.shields.io/github/stars/damianh/http-hybridcache-handler.svg)](https://github.com/damianh/http-hybridcache-handler/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/damianh/http-libs.svg)](https://github.com/damianh/http-libs/stargazers)
 
 A collection of .NET libraries for HTTP caching, structured field values, and message signatures.
 
@@ -30,14 +30,18 @@ signatures/                   # RFC 9421 HTTP message signatures
 
 ## Building
 
+Each lib has its own build script and solution filter:
+
 ```bash
-dotnet build http-lib.slnx
+dotnet run signatures/build.cs -- build   # or: structured-field-values, hybrid-cache-handler, file-distributed-cache
+dotnet build http-lib.slnx                # everything
 ```
 
 ## Running Tests
 
 ```bash
-dotnet test http-lib.slnx
+dotnet run signatures/build.cs -- test    # per lib
+dotnet test http-lib.slnx                 # everything
 ```
 
 ## License

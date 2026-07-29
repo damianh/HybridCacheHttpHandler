@@ -1,0 +1,10 @@
+{
+  "solution": {
+    "path": "..\\http-lib.slnx",
+    "projects": [
+      "file-distributed-cache\\src\\FileDistributedCache\\FileDistributedCache.csproj",
+      "file-distributed-cache\\test\\FileDistributedCache.Tests\\FileDistributedCache.Tests.csproj",
+      "file-distributed-cache\\samples\\FileDistributedCacheSample\\FileDistributedCacheSample.csproj"
+    ]
+  }
+}
