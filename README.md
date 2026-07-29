@@ -3,7 +3,7 @@
 [![CI](https://github.com/damianh/http-libs/actions/workflows/hybrid-cache-handler-ci.yml/badge.svg)](https://github.com/damianh/http-libs/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
-[![GitHub Stars](https://img.shields.io/github/stars/damianh/http-hybridcache-handler.svg)](https://github.com/damianh/http-hybridcache-handler/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/damianh/http-libs.svg)](https://github.com/damianh/http-libs/stargazers)
 
 A collection of .NET libraries for HTTP caching, structured field values, and message signatures.
 
