@@ -1,0 +1,34 @@
+name: file-distributed-cache/ci
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - '**'
+    paths:
+      - .github/BuildHelpers/**
+      - .github/workflows/file-distributed-cache-ci.yml
+      - .github/workflows/ci-template.yml
+      - file-distributed-cache/**
+      - .editorconfig
+      - Directory.Build.props
+      - global.json
+      - http-lib.slnx
+  pull_request:
+    paths:
+      - .github/BuildHelpers/**
+      - .github/workflows/file-distributed-cache-ci.yml
+      - .github/workflows/ci-template.yml
+      - file-distributed-cache/**
+      - .editorconfig
+      - Directory.Build.props
+      - global.json
+      - http-lib.slnx
+
+jobs:
+  build:
+    uses: ./.github/workflows/ci-template.yml
+    with:
+      product: file-distributed-cache
+      test-targets: '["test"]'

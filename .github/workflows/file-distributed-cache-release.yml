@@ -1,0 +1,20 @@
+name: file-distributed-cache/release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (x.y.z or x.y.z-prerelease.1)'
+        required: true
+        type: string
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-template.yml
+    with:
+      product: file-distributed-cache
+      package: DamianH.FileDistributedCache
+      tag-prefix: fdc-v
+      version: ${{ inputs.version }}
+    secrets:
+      NUGET_ORG_APIKEY: ${{ secrets.NUGET_ORG_APIKEY }}

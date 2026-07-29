@@ -1,0 +1,11 @@
+{
+  "solution": {
+    "path": "..\\http-lib.slnx",
+    "projects": [
+      "structured-field-values\\src\\Http.StructuredFieldValues\\Http.StructuredFieldValues.csproj",
+      "structured-field-values\\test\\Http.StructuredFieldValues.Tests\\Http.StructuredFieldValues.Tests.csproj",
+      "structured-field-values\\samples\\HttpClientSample\\HttpClientSample.csproj",
+      "structured-field-values\\samples\\AspNetCoreSample\\AspNetCoreSample.csproj"
+    ]
+  }
+}

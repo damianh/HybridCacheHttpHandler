@@ -1,0 +1,20 @@
+name: hybrid-cache-handler/release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (x.y.z or x.y.z-prerelease.1)'
+        required: true
+        type: string
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-template.yml
+    with:
+      product: hybrid-cache-handler
+      package: DamianH.HttpHybridCacheHandler
+      tag-prefix: cache-v
+      version: ${{ inputs.version }}
+    secrets:
+      NUGET_ORG_APIKEY: ${{ secrets.NUGET_ORG_APIKEY }}

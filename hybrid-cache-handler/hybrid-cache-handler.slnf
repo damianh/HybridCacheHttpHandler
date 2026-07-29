@@ -1,0 +1,14 @@
+{
+  "solution": {
+    "path": "..\\http-lib.slnx",
+    "projects": [
+      "hybrid-cache-handler\\src\\HttpHybridCacheHandler\\HttpHybridCacheHandler.csproj",
+      "hybrid-cache-handler\\test\\HttpHybridCacheHandler.Tests\\HttpHybridCacheHandler.Tests.csproj",
+      "hybrid-cache-handler\\samples\\HttpClientFactorySample\\HttpClientFactorySample.csproj",
+      "hybrid-cache-handler\\samples\\FusionCacheSample\\FusionCacheSample.csproj",
+      "hybrid-cache-handler\\samples\\YarpCachingProxySample\\YarpCachingProxySample.csproj",
+      "hybrid-cache-handler\\benchmarks\\Benchmarks\\Benchmarks.csproj",
+      "hybrid-cache-handler\\conformance\\ConformanceProxy\\ConformanceProxy.csproj"
+    ]
+  }
+}
