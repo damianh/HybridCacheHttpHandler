@@ -51,6 +51,43 @@ public class LargeContentStoreTests
     }
 
     [Fact]
+    public async Task Large_compressible_content_uses_external_store_based_on_original_size()
+    {
+        var largeStore = new TestLargeContentStore();
+        var content = new string('x', 4096);
+
+        var mockResponse = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent(content)
+        };
+        mockResponse.Content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+        mockResponse.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromMinutes(5) };
+
+        var mockHandler = new MockHttpMessageHandler(mockResponse);
+        await using var fixture = new HttpHybridCacheHandlerFixture(
+            mockHandler,
+            options =>
+            {
+                options.LargeContentThreshold = 1024;
+                options.CompressionThreshold = 1;
+                options.MaxCacheableContentSize = 1024 * 1024;
+            },
+            largeContentStore: largeStore);
+
+        using var client = fixture.CreateClient();
+
+        var firstResponse = await client.GetAsync(TestUrl, _ct);
+        var secondResponse = await client.GetAsync(TestUrl, _ct);
+        var secondContent = await secondResponse.Content.ReadAsStringAsync(_ct);
+
+        mockHandler.RequestCount.ShouldBe(1);
+        largeStore.WriteCount.ShouldBe(1);
+        largeStore.ReadCount.ShouldBeGreaterThanOrEqualTo(1);
+        secondContent.ShouldBe(content);
+    }
+
+    [Fact]
     public async Task Missing_external_content_falls_back_to_origin()
     {
         var largeStore = new TestLargeContentStore();

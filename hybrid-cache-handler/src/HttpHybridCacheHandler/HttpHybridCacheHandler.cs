@@ -2777,7 +2777,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         var requestUriTag = GetUriTag(request?.RequestUri);
         IEnumerable<string>? contentTags = requestUriTag == null ? null : [requestUriTag];
         var contentKey = CreateContentKey(contentToCache);
-        var contentStore = ResolveContentStore(contentToCache.Length);
+        var contentStore = ResolveContentStore(originalContent.Length);
         await contentStore.WriteAsync(contentKey, new ReadOnlySequence<byte>(contentToCache), contentTags, Ct.None);
 
         // Restore response content so caller can use it (content was consumed during read)
