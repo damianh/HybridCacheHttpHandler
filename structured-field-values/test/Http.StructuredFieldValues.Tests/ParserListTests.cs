@@ -26,7 +26,7 @@ public class ParserListTests
         // Assert
         list.Count.ShouldBe(1);
         list[0].IsItem.ShouldBeTrue();
-        list[0].Item.ShouldBeOfType<Http.StructuredFieldValues.TokenItem>();
+        list[0].Item.Value.ShouldBeOfType<TokenItem>();
     }
 
     [Fact]
@@ -37,9 +37,9 @@ public class ParserListTests
 
         // Assert
         list.Count.ShouldBe(3);
-        ((Http.StructuredFieldValues.TokenItem)list[0].Item).TokenValue.ShouldBe("foo");
-        ((Http.StructuredFieldValues.TokenItem)list[1].Item).TokenValue.ShouldBe("bar");
-        ((Http.StructuredFieldValues.TokenItem)list[2].Item).TokenValue.ShouldBe("baz");
+        ((TokenItem)list[0].Item.Value).TokenValue.ShouldBe("foo");
+        ((TokenItem)list[1].Item.Value).TokenValue.ShouldBe("bar");
+        ((TokenItem)list[2].Item.Value).TokenValue.ShouldBe("baz");
     }
 
     [Fact]
@@ -50,9 +50,9 @@ public class ParserListTests
 
         // Assert
         list.Count.ShouldBe(3);
-        list[0].Item.ShouldBeOfType<IntegerItem>();
-        list[1].Item.ShouldBeOfType<StringItem>();
-        list[2].Item.ShouldBeOfType<Http.StructuredFieldValues.TokenItem>();
+        list[0].Item.Value.ShouldBeOfType<IntegerItem>();
+        list[1].Item.Value.ShouldBeOfType<StringItem>();
+        list[2].Item.Value.ShouldBeOfType<TokenItem>();
     }
 
     [Fact]
@@ -67,9 +67,9 @@ public class ParserListTests
         
         var innerList = list[0].InnerList;
         innerList.Count.ShouldBe(3);
-        ((IntegerItem)innerList[0]).LongValue.ShouldBe(1);
-        ((IntegerItem)innerList[1]).LongValue.ShouldBe(2);
-        ((IntegerItem)innerList[2]).LongValue.ShouldBe(3);
+        ((IntegerItem)innerList[0].Value).LongValue.ShouldBe(1);
+        ((IntegerItem)innerList[1].Value).LongValue.ShouldBe(2);
+        ((IntegerItem)innerList[2].Value).LongValue.ShouldBe(3);
     }
 
     [Fact]
@@ -122,8 +122,8 @@ public class ParserListTests
 
         // Assert
         list.Count.ShouldBe(2);
-        ((Http.StructuredFieldValues.TokenItem)list[0].Item).TokenValue.ShouldBe("foo");
-        ((Http.StructuredFieldValues.TokenItem)list[1].Item).TokenValue.ShouldBe("bar");
+        ((TokenItem)list[0].Item.Value).TokenValue.ShouldBe("foo");
+        ((TokenItem)list[1].Item.Value).TokenValue.ShouldBe("bar");
     }
 
     [Fact]

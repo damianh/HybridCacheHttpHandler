@@ -120,14 +120,7 @@ internal static class FieldComponentResolver
                 identifier,
                 $"SF Dictionary key '{key}' not found in '{identifier.Name}' field.");
 
-        // Serialize just the member value (not the key=value pair)
-        if (member.IsItem)
-            return StructuredFieldSerializer.SerializeItem(member.Item);
-
-        // Inner list — serialize it using a single-element list and take the inner list portion
-        // We need to render just the inner list, not wrapped in an outer list
-        var singleMemberList = new StructuredFieldList([ListMember.FromInnerList(member.InnerList)]);
-        return StructuredFieldSerializer.SerializeList(singleMemberList);
+        return StructuredFieldSerializer.SerializeMember(member);
     }
 
     private static string ResolveBinaryWrapped(ComponentIdentifier identifier, IHttpMessageContext context)
@@ -147,7 +140,7 @@ internal static class FieldComponentResolver
 
             var bytes = System.Text.Encoding.Latin1.GetBytes(values[i]);
             var item = new ByteSequenceItem(bytes);
-            sb.Append(StructuredFieldSerializer.SerializeItem(item));
+            sb.Append(StructuredFieldSerializer.SerializeBareItem(item));
         }
 
         return sb.ToString();

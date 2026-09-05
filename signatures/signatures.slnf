@@ -2,6 +2,7 @@
   "solution": {
     "path": "..\\http-lib.slnx",
     "projects": [
+      "structured-field-values\\src\\Http.StructuredFieldValues\\Http.StructuredFieldValues.csproj",
       "signatures\\src\\Http.HttpSignatures\\Http.HttpSignatures.csproj",
       "signatures\\test\\Http.HttpSignatures.Tests\\Http.HttpSignatures.Tests.csproj"
     ]

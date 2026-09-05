@@ -11,14 +11,9 @@ internal static class ListMapperFactory
     /// <summary>
     /// Builds a parse delegate that converts a <see cref="StructuredFieldList"/> into a <typeparamref name="T"/>.
     /// </summary>
-    internal static Func<StructuredFieldList, T> BuildParseDelegate<T>(ListBuilder<T> builder)
-        where T : new()
+    internal static Func<StructuredFieldList, T> BuildParseDelegate<T>(ListElementConfig<T> config)
+        where T : class, new()
     {
-        var config = builder.ElementConfig
-            ?? throw new InvalidOperationException(
-                "No element mapping was registered on the ListBuilder. " +
-                "Call Elements() or TokenElements() before creating the mapper.");
-
         return list =>
         {
             var instance = new T();
@@ -41,7 +36,7 @@ internal static class ListMapperFactory
                 {
                     elements.Add(ItemTypeResolver.ExtractValue(
                         config.ElementKind,
-                        item,
+                        item.Value,
                         config.ElementClrType,
                         "list element"));
                 }
@@ -56,13 +51,9 @@ internal static class ListMapperFactory
     /// <summary>
     /// Builds a serialize delegate that converts a <typeparamref name="T"/> into a <see cref="StructuredFieldList"/>.
     /// </summary>
-    internal static Func<T, StructuredFieldList> BuildSerializeDelegate<T>(ListBuilder<T> builder)
-        where T : new()
+    internal static Func<T, StructuredFieldList> BuildSerializeDelegate<T>(ListElementConfig<T> config)
+        where T : class, new()
     {
-        var config = builder.ElementConfig
-            ?? throw new InvalidOperationException(
-                "No element mapping was registered on the ListBuilder.");
-
         return instance =>
         {
             var list = new StructuredFieldList();
@@ -73,19 +64,13 @@ internal static class ListMapperFactory
 
             var collection = (System.Collections.IEnumerable)rawValue;
 
-            if (config.IsNestedItem)
+            foreach (var element in collection)
             {
-                foreach (var element in collection)
-                    list.Add(config.NestedItemSerializeDelegate!(element));
-            }
-            else
-            {
-                foreach (var element in collection)
-                {
-                    var item = ItemTypeResolver.ToItem(config.ElementKind, element);
-                    if (item != null)
-                        list.Add(item);
-                }
+                if (element is null)
+                    throw new InvalidOperationException("List contains a null element.");
+                list.Add(config.IsNestedItem
+                    ? config.NestedItemSerializeDelegate!(element)
+                    : new StructuredFieldItem(ItemTypeResolver.ToItem(config.ElementKind, element)));
             }
 
             return list;

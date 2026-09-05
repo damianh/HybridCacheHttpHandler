@@ -26,5 +26,5 @@ public class AcceptClientHintHeaderValue
     /// <summary>Mapper for parsing and serializing Accept-CH headers.</summary>
     public static readonly StructuredFieldMapper<AcceptClientHintHeaderValue> Mapper =
         StructuredFieldMapper<AcceptClientHintHeaderValue>.List(b => b
-            .TokenElements(x => x.Hints));
+            .Elements(x => x.Hints, type: ItemType.Token));
 }

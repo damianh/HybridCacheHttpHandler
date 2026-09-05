@@ -12,25 +12,25 @@ public class StructuredFieldListTests
     {
         var members = new[]
         {
-            ListMember.FromItem(new IntegerItem(1)),
-            ListMember.FromItem(new IntegerItem(2))
+            StructuredFieldMember.FromItem(new IntegerItem(1)),
+            StructuredFieldMember.FromItem(new IntegerItem(2))
         };
 
         var list = new StructuredFieldList(members);
         
         list.Count.ShouldBe(2);
-        list[0].Item.ShouldBeOfType<IntegerItem>();
-        list[1].Item.ShouldBeOfType<IntegerItem>();
+        list[0].Item.Value.ShouldBeOfType<IntegerItem>();
+        list[1].Item.Value.ShouldBeOfType<IntegerItem>();
     }
 
     [Fact]
     public void Constructor_WithNull_ThrowsArgumentNullException() => Should.Throw<ArgumentNullException>(() => new StructuredFieldList(null!));
 
     [Fact]
-    public void Add_ListMember_Success()
+    public void Add_Member_Success()
     {
         var list = new StructuredFieldList();
-        var member = ListMember.FromItem(new IntegerItem(42));
+        var member = StructuredFieldMember.FromItem(new IntegerItem(42));
         
         list.Add(member);
         
@@ -47,7 +47,7 @@ public class StructuredFieldListTests
         list.Add(item);
         
         list.Count.ShouldBe(1);
-        list[0].Item.ShouldBe(item);
+        list[0].Item.Value.ShouldBe(item);
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public class StructuredFieldListTests
     public void Add_NullMember_ThrowsArgumentNullException()
     {
         var list = new StructuredFieldList();
-        Should.Throw<ArgumentNullException>(() => list.Add((ListMember)null!));
+        Should.Throw<ArgumentNullException>(() => list.Add((StructuredFieldMember)null!));
     }
 
     [Fact]
@@ -90,8 +90,8 @@ public class StructuredFieldListTests
         var list = new StructuredFieldList();
         var members = new[]
         {
-            ListMember.FromItem(new IntegerItem(1)),
-            ListMember.FromItem(new IntegerItem(2))
+            StructuredFieldMember.FromItem(new IntegerItem(1)),
+            StructuredFieldMember.FromItem(new IntegerItem(2))
         };
 
         list.AddRange(members);
@@ -128,28 +128,28 @@ public class StructuredFieldListTests
         var member = list[0];
         
         member.IsItem.ShouldBeTrue();
-        member.Item.ShouldBe(item);
+        member.Item.Value.ShouldBe(item);
     }
 
     [Fact]
-    public void ToString_EmptyList_ReturnsEmptyString()
+    public void ToString_EmptyList_IsDiagnostic()
     {
         var list = new StructuredFieldList();
-        list.ToString().ShouldBe("");
+        list.ToString().ShouldBe("List(0 members)");
     }
 
     [Fact]
-    public void ToString_WithMembers_ReturnsFormattedString()
+    public void ToString_WithMembers_IsDiagnostic()
     {
         var list = new StructuredFieldList();
         list.Add(new IntegerItem(1));
         list.Add(new IntegerItem(2));
         
-        list.ToString().ShouldBe("1, 2");
+        list.ToString().ShouldBe("List(2 members)");
     }
 
     [Fact]
-    public void ToString_WithInnerList_ReturnsFormattedString()
+    public void ToString_WithInnerList_IsDiagnostic()
     {
         var list = new StructuredFieldList();
         var innerList = new InnerList();
@@ -159,6 +159,17 @@ public class StructuredFieldListTests
         list.Add(innerList);
         list.Add(new IntegerItem(3));
         
-        list.ToString().ShouldBe("(1 2), 3");
+        list.ToString().ShouldBe("List(2 members)");
+    }
+
+    [Fact]
+    public void NullElements_AreRejectedAtomically()
+    {
+        var list = new StructuredFieldList([new IntegerItem(1)]);
+        Should.Throw<ArgumentNullException>(() => new StructuredFieldList([new IntegerItem(2), null!]));
+        Should.Throw<ArgumentNullException>(() => list.AddRange([new IntegerItem(2), null!]));
+        Should.Throw<ArgumentNullException>(() => list.Add((BareItem)null!));
+        Should.Throw<ArgumentNullException>(() => list[0] = null!);
+        list.Count.ShouldBe(1);
     }
 }

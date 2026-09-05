@@ -9,7 +9,7 @@ public class ListMapperTests
 {
     private static readonly StructuredFieldMapper<AcceptClientHintHeaderValue> AcceptChMapper =
         StructuredFieldMapper<AcceptClientHintHeaderValue>.List(b => b
-            .TokenElements(x => x.Hints));
+            .Elements(x => x.Hints, type: ItemType.Token));
 
     [Fact]
     public void Parse_ValidHeader_ReturnsExpectedValues()

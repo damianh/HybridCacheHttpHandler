@@ -7,10 +7,11 @@ namespace DamianH.Http.StructuredFieldValues;
 /// Represents a structured field list.
 /// Lists are ordered sequences of items or inner lists.
 /// RFC 8941 § 3.1
+/// This mutable collection uses reference equality and retains explicitly shared nodes.
 /// </summary>
 public sealed class StructuredFieldList
 {
-    private readonly List<ListMember> _members = new();
+    private readonly List<StructuredFieldMember> _members = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StructuredFieldList"/> class.
@@ -23,16 +24,15 @@ public sealed class StructuredFieldList
     /// Initializes a new instance of the <see cref="StructuredFieldList"/> class with members.
     /// </summary>
     /// <param name="members">The members to include in the list.</param>
-    public StructuredFieldList(IEnumerable<ListMember> members)
+    public StructuredFieldList(IEnumerable<StructuredFieldMember> members)
     {
-        ArgumentNullException.ThrowIfNull(members);
-        _members.AddRange(members);
+        AddRange(members);
     }
 
     /// <summary>
     /// Gets the members of this list.
     /// </summary>
-    public IReadOnlyList<ListMember> Members => _members.AsReadOnly();
+    public IReadOnlyList<StructuredFieldMember> Members => _members.AsReadOnly();
 
     /// <summary>
     /// Gets the number of members in the list.
@@ -44,13 +44,21 @@ public sealed class StructuredFieldList
     /// </summary>
     /// <param name="index">The zero-based index.</param>
     /// <returns>The member at the specified index.</returns>
-    public ListMember this[int index] => _members[index];
+    public StructuredFieldMember this[int index]
+    {
+        get => _members[index];
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _members[index] = value;
+        }
+    }
 
     /// <summary>
     /// Adds a member to the list.
     /// </summary>
     /// <param name="member">The member to add.</param>
-    public void Add(ListMember member)
+    public void Add(StructuredFieldMember member)
     {
         ArgumentNullException.ThrowIfNull(member);
         _members.Add(member);
@@ -63,8 +71,11 @@ public sealed class StructuredFieldList
     public void Add(StructuredFieldItem item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        _members.Add(ListMember.FromItem(item));
+        _members.Add(StructuredFieldMember.FromItem(item));
     }
+
+    /// <summary>Adds a bare value wrapped in a new item and member.</summary>
+    public void Add(BareItem value) => Add(StructuredFieldMember.FromItem(value));
 
     /// <summary>
     /// Adds an inner list to the list.
@@ -73,17 +84,22 @@ public sealed class StructuredFieldList
     public void Add(InnerList innerList)
     {
         ArgumentNullException.ThrowIfNull(innerList);
-        _members.Add(ListMember.FromInnerList(innerList));
+        _members.Add(StructuredFieldMember.FromInnerList(innerList));
     }
 
     /// <summary>
     /// Adds multiple members to the list.
     /// </summary>
     /// <param name="members">The members to add.</param>
-    public void AddRange(IEnumerable<ListMember> members)
+    public void AddRange(IEnumerable<StructuredFieldMember> members)
     {
         ArgumentNullException.ThrowIfNull(members);
-        _members.AddRange(members);
+        var snapshot = members.ToArray();
+        foreach (var member in snapshot)
+        {
+            ArgumentNullException.ThrowIfNull(member);
+        }
+        _members.AddRange(snapshot);
     }
 
     /// <summary>
@@ -91,6 +107,6 @@ public sealed class StructuredFieldList
     /// </summary>
     public void Clear() => _members.Clear();
 
-    /// <inheritdoc/>
-    public override string ToString() => string.Join(", ", _members.Select(m => m.ToString()));
+    /// <summary>Returns diagnostic text, not wire output; use <see cref="StructuredFieldSerializer"/>.</summary>
+    public override string ToString() => $"List({Count} members)";
 }

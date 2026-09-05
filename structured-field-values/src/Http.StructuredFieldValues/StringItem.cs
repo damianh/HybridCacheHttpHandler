@@ -7,7 +7,7 @@ namespace DamianH.Http.StructuredFieldValues;
 /// Represents a string item in a structured field value.
 /// RFC 8941 defines strings as sequences of printable ASCII characters.
 /// </summary>
-public sealed class StringItem : StructuredFieldItem
+public sealed class StringItem : BareItem
 {
     private readonly string _value;
 

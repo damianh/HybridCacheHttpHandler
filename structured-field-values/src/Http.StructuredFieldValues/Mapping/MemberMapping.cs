@@ -4,8 +4,8 @@
 namespace DamianH.Http.StructuredFieldValues.Mapping;
 
 /// <summary>
-/// Describes a single dictionary member mapping: the RFC 8941 key, compiled property
-/// accessors, the target RFC 8941 type, and whether the member is required or optional.
+/// Describes a single dictionary member mapping: the RFC 9651 key, compiled property
+/// accessors, the target RFC 9651 type, and whether the member is required or optional.
 /// </summary>
 internal sealed class MemberMapping<T>
 {
@@ -15,7 +15,6 @@ internal sealed class MemberMapping<T>
         Action<T, object?> setter,
         ValueKind kind,
         bool isRequired,
-        bool isToken,
         Type clrType,
         InnerListConfig? innerList = null)
     {
@@ -24,12 +23,11 @@ internal sealed class MemberMapping<T>
         Setter = setter;
         Kind = kind;
         IsRequired = isRequired;
-        IsToken = isToken;
         ClrType = clrType;
         InnerList = innerList;
     }
 
-    /// <summary>RFC 8941 dictionary key.</summary>
+    /// <summary>RFC 9651 dictionary key.</summary>
     internal string Key { get; }
 
     /// <summary>Compiled property getter returning a boxed value.</summary>
@@ -41,20 +39,13 @@ internal sealed class MemberMapping<T>
     /// <summary>The CLR type of the property (used for int/int? narrowing).</summary>
     internal Type ClrType { get; }
 
-    /// <summary>RFC 8941 bare item type for this member.</summary>
+    /// <summary>RFC 9651 bare item type for this member.</summary>
     internal ValueKind Kind { get; }
 
     /// <summary>
-    /// Whether the member is required during parse.
-    /// A missing required member throws <see cref="StructuredFieldParseException"/>.
+    /// Whether absence on parse and null on serialization are rejected.
     /// </summary>
     internal bool IsRequired { get; }
-
-    /// <summary>
-    /// Whether the value should be treated as a Token rather than a String.
-    /// Only meaningful when <see cref="Kind"/> is <see cref="ValueKind.Token"/>.
-    /// </summary>
-    internal bool IsToken { get; }
 
     /// <summary>
     /// Inner-list configuration when this member maps to an inner list.
@@ -71,10 +62,9 @@ internal sealed class MemberMapping<T>
 /// </summary>
 internal sealed class InnerListConfig
 {
-    internal InnerListConfig(ValueKind elementKind, bool isToken, Type elementClrType)
+    internal InnerListConfig(ValueKind elementKind, Type elementClrType)
     {
         ElementKind = elementKind;
-        IsToken = isToken;
         ElementClrType = elementClrType;
         NestedItemParseDelegate = null;
         NestedItemSerializeDelegate = null;
@@ -85,15 +75,12 @@ internal sealed class InnerListConfig
         Func<StructuredFieldItem, object> nestedParse,
         Func<object, StructuredFieldItem> nestedSerialize)
     {
-        ElementKind = ValueKind.Token; // unused for nested; kind determined by nested mapper
-        IsToken = false;
         ElementClrType = elementClrType;
         NestedItemParseDelegate = nestedParse;
         NestedItemSerializeDelegate = nestedSerialize;
     }
 
     internal ValueKind ElementKind { get; }
-    internal bool IsToken { get; }
     internal Type ElementClrType { get; }
 
     /// <summary>

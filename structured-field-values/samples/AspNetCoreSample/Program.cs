@@ -10,14 +10,13 @@ app.MapGet("/parse-headers", (HttpRequest request) =>
 {
     var results = new Dictionary<string, object>();
 
-    // Parse Cache-Control as a typed header
-    if (request.TryGetHeader("Cache-Control", CacheControlHeader.Mapper, out var cacheControl))
+    // Parse Priority as a typed header
+    if (request.TryGetHeader("Priority", PriorityHeader.Mapper, out var priority))
     {
-        results["Cache-Control"] = new
+        results["Priority"] = new
         {
-            cacheControl.MaxAge,
-            cacheControl.Private,
-            cacheControl.MustRevalidate
+            priority.Urgency,
+            priority.Incremental
         };
     }
 
@@ -33,9 +32,9 @@ app.MapGet("/parse-headers", (HttpRequest request) =>
 // Endpoint demonstrating setting typed headers on responses
 app.MapGet("/set-headers", (HttpResponse response) =>
 {
-    // Set Cache-Control using the typed mapper
-    var cacheControl = new CacheControlHeader { MaxAge = 3600, Private = true };
-    response.SetHeader("Cache-Control", CacheControlHeader.Mapper, cacheControl);
+    // Set Priority using the typed mapper
+    var priority = new PriorityHeader { Urgency = 3, Incremental = true };
+    response.SetHeader("Priority", PriorityHeader.Mapper, priority);
 
     // Set Accept-CH using the typed mapper
     var acceptCH = new AcceptClientHintHeaderValue

@@ -83,7 +83,7 @@ public class ComponentIdentifierTests
     [Fact]
     public void FieldKey_SerializesWithKeyParameter()
     {
-        ComponentIdentifier.FieldKey("cache-control", "max-age").Serialize().ShouldBe("\"cache-control\";key=\"max-age\"");
+        ComponentIdentifier.FieldKey("priority", "u").Serialize().ShouldBe("\"priority\";key=\"u\"");
     }
 
     [Fact]
@@ -128,8 +128,8 @@ public class ComponentIdentifierTests
     [Fact]
     public void Equals_DifferentParams_ReturnsFalse()
     {
-        var a = ComponentIdentifier.Field("content-type");
-        var b = ComponentIdentifier.FieldSf("content-type");
+        var a = ComponentIdentifier.Field("priority");
+        var b = ComponentIdentifier.FieldSf("priority");
         a.Equals(b).ShouldBeFalse();
     }
 

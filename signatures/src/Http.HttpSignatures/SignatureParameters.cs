@@ -1,8 +1,6 @@
 // Copyright (c) Damian Hickey. All rights reserved.
 // See LICENSE in the project root for license information.
 
-using System.Globalization;
-using System.Text;
 using DamianH.Http.StructuredFieldValues;
 
 namespace DamianH.Http.HttpSignatures;
@@ -27,12 +25,12 @@ public sealed class SignatureParameters
     public IReadOnlyList<ComponentIdentifier> CoveredComponents { get; }
 
     /// <summary>
-    /// Gets the raw serialized form of these parameters, preserved from the original
-    /// <c>Signature-Input</c> header when parsed. Used by the verifier to reconstruct
-    /// the exact signature base that the signer produced.
-    /// When null, <see cref="Serialize"/> generates the canonical form.
+    /// Gets the canonical serialization of the parsed <c>Signature-Input</c>
+    /// member, preserving parameter order and unknown parameters.
+    /// This is not the original wire text. When null, <see cref="Serialize"/>
+    /// serializes the configured properties.
     /// </summary>
-    internal string? RawSerializedValue { get; init; }
+    internal string? ParsedCanonicalValue { get; init; }
 
     /// <summary>Gets the Unix timestamp of when the signature was created.</summary>
     public DateTimeOffset? Created { get; init; }
@@ -60,63 +58,29 @@ public sealed class SignatureParameters
     /// <returns>The serialized Inner List string.</returns>
     public string Serialize()
     {
-        // When parsed from a Signature-Input header, use the preserved raw serialization
-        // to ensure the @signature-params line in the signature base matches exactly
-        // what the signer used (preserving original parameter order).
-        if (RawSerializedValue is not null)
+        if (ParsedCanonicalValue is not null)
         {
-            return RawSerializedValue;
+            return ParsedCanonicalValue;
         }
 
-        var sb = new StringBuilder();
-
-        // Inner list opening: (component1 component2 ...)
-        sb.Append('(');
-        for (var i = 0; i < CoveredComponents.Count; i++)
-        {
-            if (i > 0) sb.Append(' ');
-            sb.Append(CoveredComponents[i].Serialize());
-        }
-        sb.Append(')');
+        var innerList = new InnerList(CoveredComponents.Select(c => c.ToStructuredFieldItem()));
 
         // Signature parameters — order per RFC 9421 Appendix B test vectors:
         // created, expires, keyid, nonce, alg, tag
         if (Created.HasValue)
-        {
-            sb.Append(";created=");
-            sb.Append(Created.Value.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
-        }
+            innerList.Parameters.Add("created", new IntegerItem(Created.Value.ToUnixTimeSeconds()));
         if (Expires.HasValue)
-        {
-            sb.Append(";expires=");
-            sb.Append(Expires.Value.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
-        }
+            innerList.Parameters.Add("expires", new IntegerItem(Expires.Value.ToUnixTimeSeconds()));
         if (KeyId is not null)
-        {
-            sb.Append(";keyid=\"");
-            AppendEscapedString(sb, KeyId);
-            sb.Append('"');
-        }
+            innerList.Parameters.Add("keyid", new StringItem(KeyId));
         if (Nonce is not null)
-        {
-            sb.Append(";nonce=\"");
-            AppendEscapedString(sb, Nonce);
-            sb.Append('"');
-        }
+            innerList.Parameters.Add("nonce", new StringItem(Nonce));
         if (Algorithm is not null)
-        {
-            sb.Append(";alg=\"");
-            AppendEscapedString(sb, Algorithm);
-            sb.Append('"');
-        }
+            innerList.Parameters.Add("alg", new StringItem(Algorithm));
         if (Tag is not null)
-        {
-            sb.Append(";tag=\"");
-            AppendEscapedString(sb, Tag);
-            sb.Append('"');
-        }
+            innerList.Parameters.Add("tag", new StringItem(Tag));
 
-        return sb.ToString();
+        return StructuredFieldSerializer.SerializeInnerList(innerList);
     }
 
     /// <summary>
@@ -135,10 +99,10 @@ public sealed class SignatureParameters
         for (var i = 0; i < innerList.Count; i++)
         {
             var item = innerList[i];
-            if (item is not StringItem nameItem)
+            if (item.Value is not StringItem nameItem)
             {
                 throw new FormatException(
-                    $"Component identifier at index {i} must be an SF String, but was {item.GetType().Name}.");
+                    $"Component identifier at index {i} must be an SF String, but was {item.Value.GetType().Name}.");
             }
 
             var name = nameItem.StringValue;
@@ -232,118 +196,7 @@ public sealed class SignatureParameters
             Algorithm = alg,
             KeyId = keyId,
             Tag = tag,
-            RawSerializedValue = SerializeInnerList(innerList),
+            ParsedCanonicalValue = StructuredFieldSerializer.SerializeInnerList(innerList),
         };
-    }
-
-    /// <summary>
-    /// Serializes an <see cref="InnerList"/> to the RFC 8941 canonical form,
-    /// preserving the parameter order from the parsed input.
-    /// This is used to reconstruct the exact <c>@signature-params</c> value
-    /// that was present in the original <c>Signature-Input</c> header.
-    /// </summary>
-    private static string SerializeInnerList(InnerList innerList)
-    {
-        var sb = new StringBuilder();
-        sb.Append('(');
-
-        for (var i = 0; i < innerList.Count; i++)
-        {
-            if (i > 0) sb.Append(' ');
-            SerializeSfItem(innerList[i], sb);
-        }
-
-        sb.Append(')');
-        SerializeSfParameters(innerList.Parameters, sb);
-        return sb.ToString();
-    }
-
-    /// <summary>
-    /// Serializes a structured field item (bare item + parameters) per RFC 8941.
-    /// </summary>
-    private static void SerializeSfItem(StructuredFieldItem item, StringBuilder sb)
-    {
-        // Bare item
-        switch (item)
-        {
-            case StringItem si:
-                sb.Append('"');
-                AppendEscapedString(sb, si.StringValue);
-                sb.Append('"');
-                break;
-            case IntegerItem ii:
-                sb.Append(ii.LongValue.ToString(CultureInfo.InvariantCulture));
-                break;
-            case TokenItem ti:
-                sb.Append(ti.TokenValue);
-                break;
-            case BooleanItem bi:
-                sb.Append(bi.BooleanValue ? "?1" : "?0");
-                break;
-            case ByteSequenceItem bsi:
-                sb.Append(':');
-                sb.Append(Convert.ToBase64String(bsi.ByteArrayValue));
-                sb.Append(':');
-                break;
-            case DecimalItem di:
-                sb.Append(di.DecimalValue.ToString(CultureInfo.InvariantCulture));
-                break;
-            default:
-                throw new FormatException($"Unsupported structured field item type: {item.GetType().Name}");
-        }
-
-        // Item parameters
-        SerializeSfParameters(item.Parameters, sb);
-    }
-
-    /// <summary>
-    /// Serializes structured field parameters per RFC 8941 § 4.1.1.2,
-    /// preserving the iteration (insertion) order.
-    /// </summary>
-    private static void SerializeSfParameters(Parameters parameters, StringBuilder sb)
-    {
-        foreach (var (key, value) in parameters)
-        {
-            sb.Append(';');
-            sb.Append(key);
-            if (value is not null and not BooleanItem { BooleanValue: true })
-            {
-                sb.Append('=');
-                switch (value)
-                {
-                    case StringItem si:
-                        sb.Append('"');
-                        AppendEscapedString(sb, si.StringValue);
-                        sb.Append('"');
-                        break;
-                    case IntegerItem ii:
-                        sb.Append(ii.LongValue.ToString(CultureInfo.InvariantCulture));
-                        break;
-                    case TokenItem ti:
-                        sb.Append(ti.TokenValue);
-                        break;
-                    case BooleanItem bi:
-                        sb.Append(bi.BooleanValue ? "?1" : "?0");
-                        break;
-                    case ByteSequenceItem bsi:
-                        sb.Append(':');
-                        sb.Append(Convert.ToBase64String(bsi.ByteArrayValue));
-                        sb.Append(':');
-                        break;
-                    case DecimalItem di:
-                        sb.Append(di.DecimalValue.ToString(CultureInfo.InvariantCulture));
-                        break;
-                }
-            }
-        }
-    }
-
-    private static void AppendEscapedString(StringBuilder sb, string value)
-    {
-        foreach (var c in value)
-        {
-            if (c is '\\' or '"') sb.Append('\\');
-            sb.Append(c);
-        }
     }
 }

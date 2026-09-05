@@ -11,6 +11,7 @@ on:
       - .github/workflows/signatures-ci.yml
       - .github/workflows/ci-template.yml
       - signatures/**
+      - structured-field-values/**
       - .editorconfig
       - Directory.Build.props
       - global.json
@@ -21,6 +22,7 @@ on:
       - .github/workflows/signatures-ci.yml
       - .github/workflows/ci-template.yml
       - signatures/**
+      - structured-field-values/**
       - .editorconfig
       - Directory.Build.props
       - global.json

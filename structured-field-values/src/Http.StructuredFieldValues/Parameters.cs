@@ -8,12 +8,12 @@ namespace DamianH.Http.StructuredFieldValues;
 
 /// <summary>
 /// Represents parameters attached to items or inner lists in structured field values.
-/// Parameters are an ordered map of key-value pairs where keys are tokens and values are items.
-/// RFC 8941 § 3.1.2
+/// Parameters are an ordered map of valid keys to non-null immutable bare values.
+/// A flag is Boolean true, not null. This mutable collection uses reference equality.
 /// </summary>
-public sealed class Parameters : IEnumerable<KeyValuePair<string, StructuredFieldItem?>>
+public sealed class Parameters : IEnumerable<KeyValuePair<string, BareItem>>
 {
-    private readonly OrderedDictionary<string, StructuredFieldItem?> _parameters = new();
+    private readonly OrderedDictionary<string, BareItem> _parameters = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Parameters"/> class.
@@ -26,7 +26,7 @@ public sealed class Parameters : IEnumerable<KeyValuePair<string, StructuredFiel
     /// Initializes a new instance of the <see cref="Parameters"/> class with initial values.
     /// </summary>
     /// <param name="parameters">Initial parameters.</param>
-    public Parameters(IEnumerable<KeyValuePair<string, StructuredFieldItem?>> parameters)
+    public Parameters(IEnumerable<KeyValuePair<string, BareItem>> parameters)
     {
         ArgumentNullException.ThrowIfNull(parameters);
         
@@ -45,13 +45,14 @@ public sealed class Parameters : IEnumerable<KeyValuePair<string, StructuredFiel
     /// Gets or sets the parameter with the specified key.
     /// </summary>
     /// <param name="key">The parameter key (must be a valid token).</param>
-    /// <returns>The parameter value, or null if the key is present with no value.</returns>
-    public StructuredFieldItem? this[string key]
+    /// <returns>The non-null bare parameter value.</returns>
+    public BareItem this[string key]
     {
         get => _parameters[key];
         set
         {
             ValidateKey(key);
+            ArgumentNullException.ThrowIfNull(value);
             _parameters[key] = value;
         }
     }
@@ -61,11 +62,15 @@ public sealed class Parameters : IEnumerable<KeyValuePair<string, StructuredFiel
     /// </summary>
     /// <param name="key">The parameter key (must be a valid token).</param>
     /// <param name="value">The parameter value.</param>
-    public void Add(string key, StructuredFieldItem? value)
+    public void Add(string key, BareItem value)
     {
         ValidateKey(key);
+        ArgumentNullException.ThrowIfNull(value);
         _parameters.Add(key, value);
     }
+
+    /// <summary>Adds a Boolean true flag. Duplicate keys throw.</summary>
+    public void Add(string key) => Add(key, BooleanItem.True);
 
     /// <summary>
     /// Tries to get the parameter with the specified key.
@@ -73,7 +78,7 @@ public sealed class Parameters : IEnumerable<KeyValuePair<string, StructuredFiel
     /// <param name="key">The parameter key.</param>
     /// <param name="value">The parameter value if found.</param>
     /// <returns>True if the parameter exists, false otherwise.</returns>
-    public bool TryGetValue(string key, [NotNullWhen(true)] out StructuredFieldItem? value) => _parameters.TryGetValue(key, out value);
+    public bool TryGetValue(string key, [NotNullWhen(true)] out BareItem? value) => _parameters.TryGetValue(key, out value);
 
     /// <summary>
     /// Determines whether a parameter with the specified key exists.
@@ -97,14 +102,17 @@ public sealed class Parameters : IEnumerable<KeyValuePair<string, StructuredFiel
     /// <summary>
     /// Gets an enumerator that iterates through the parameters in insertion order.
     /// </summary>
-    public IEnumerator<KeyValuePair<string, StructuredFieldItem?>> GetEnumerator() => _parameters.GetEnumerator();
+    public IEnumerator<KeyValuePair<string, BareItem>> GetEnumerator() => _parameters.GetEnumerator();
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    /// <summary>Returns diagnostic text, not wire output; use <see cref="StructuredFieldSerializer"/>.</summary>
+    public override string ToString() => $"Parameters({Count})";
 
     private static void ValidateKey(string key)
     {
         ArgumentException.ThrowIfNullOrEmpty(key);
-        
+
         if (!TokenItem.IsValidKey(key))
         {
             throw new ArgumentException(

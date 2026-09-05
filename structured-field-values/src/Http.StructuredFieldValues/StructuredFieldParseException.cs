@@ -39,6 +39,10 @@ public class StructuredFieldParseException : FormatException
     /// <param name="position">The position in the input where the error occurred.</param>
     public StructuredFieldParseException(string message, int position) : base($"{message} at position {position}") => Position = position;
 
+    /// <summary>Creates a parse error with an input position and an underlying decoding error.</summary>
+    public StructuredFieldParseException(string message, int position, Exception innerException)
+        : base($"{message} at position {position}", innerException) => Position = position;
+
     /// <summary>
     /// Gets the position in the input where the error occurred, if known.
     /// </summary>

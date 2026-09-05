@@ -12,25 +12,25 @@ public class StructuredFieldDictionaryTests
     {
         var members = new[]
         {
-            new KeyValuePair<string, DictionaryMember>("a", DictionaryMember.FromItem(new IntegerItem(1))),
-            new KeyValuePair<string, DictionaryMember>("b", DictionaryMember.FromItem(new IntegerItem(2)))
+            new KeyValuePair<string, StructuredFieldMember>("a", StructuredFieldMember.FromItem(new IntegerItem(1))),
+            new KeyValuePair<string, StructuredFieldMember>("b", StructuredFieldMember.FromItem(new IntegerItem(2)))
         };
 
         var dict = new StructuredFieldDictionary(members);
         
         dict.Count.ShouldBe(2);
-        dict["a"].Item.ShouldBeOfType<IntegerItem>();
-        dict["b"].Item.ShouldBeOfType<IntegerItem>();
+        dict["a"].Item.Value.ShouldBeOfType<IntegerItem>();
+        dict["b"].Item.Value.ShouldBeOfType<IntegerItem>();
     }
 
     [Fact]
     public void Constructor_WithNull_ThrowsArgumentNullException() => Should.Throw<ArgumentNullException>(() => new StructuredFieldDictionary(null!));
 
     [Fact]
-    public void Add_DictionaryMember_Success()
+    public void Add_Member_Success()
     {
         var dict = new StructuredFieldDictionary();
-        var member = DictionaryMember.FromItem(new IntegerItem(42));
+        var member = StructuredFieldMember.FromItem(new IntegerItem(42));
         
         dict.Add("test", member);
         
@@ -47,7 +47,7 @@ public class StructuredFieldDictionaryTests
         dict.Add("test", item);
         
         dict.Count.ShouldBe(1);
-        dict["test"].Item.ShouldBe(item);
+        dict["test"].Item.Value.ShouldBe(item);
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public class StructuredFieldDictionaryTests
     public void Add_NullMember_ThrowsArgumentNullException()
     {
         var dict = new StructuredFieldDictionary();
-        Should.Throw<ArgumentNullException>(() => dict.Add("test", (DictionaryMember)null!));
+        Should.Throw<ArgumentNullException>(() => dict.Add("test", (StructuredFieldMember)null!));
     }
 
     [Fact]
@@ -110,7 +110,7 @@ public class StructuredFieldDictionaryTests
     public void Indexer_Set_NewKey_Success()
     {
         var dict = new StructuredFieldDictionary();
-        var member = DictionaryMember.FromItem(new IntegerItem(42));
+        var member = StructuredFieldMember.FromItem(new IntegerItem(42));
         
         dict["newkey"] = member;
         
@@ -122,11 +122,11 @@ public class StructuredFieldDictionaryTests
     public void Indexer_Set_ExistingKey_UpdatesValue()
     {
         var dict = new StructuredFieldDictionary();
-        dict["test"] = DictionaryMember.FromItem(new IntegerItem(1));
-        dict["test"] = DictionaryMember.FromItem(new IntegerItem(2));
+        dict["test"] = StructuredFieldMember.FromItem(new IntegerItem(1));
+        dict["test"] = StructuredFieldMember.FromItem(new IntegerItem(2));
         
         dict.Count.ShouldBe(1);
-        ((IntegerItem)dict["test"].Item).LongValue.ShouldBe(2);
+        ((IntegerItem)dict["test"].Item.Value).LongValue.ShouldBe(2);
     }
 
     [Fact]
@@ -140,7 +140,7 @@ public class StructuredFieldDictionaryTests
     public void TryGetValue_ExistingKey_ReturnsTrue()
     {
         var dict = new StructuredFieldDictionary();
-        var member = DictionaryMember.FromItem(new IntegerItem(42));
+        var member = StructuredFieldMember.FromItem(new IntegerItem(42));
         dict.Add("test", member);
         
         var result = dict.TryGetValue("test", out var value);
@@ -226,14 +226,14 @@ public class StructuredFieldDictionaryTests
     }
 
     [Fact]
-    public void ToString_EmptyDictionary_ReturnsEmptyString()
+    public void ToString_EmptyDictionary_IsDiagnostic()
     {
         var dict = new StructuredFieldDictionary();
-        dict.ToString().ShouldBe("");
+        dict.ToString().ShouldBe("Dictionary(0 members)");
     }
 
     [Fact]
-    public void ToString_WithMembers_ReturnsFormattedString()
+    public void ToString_WithMembers_IsDiagnostic()
     {
         var dict = new StructuredFieldDictionary
         {
@@ -241,6 +241,17 @@ public class StructuredFieldDictionaryTests
             { "b", new IntegerItem(2) }
         };
 
-        dict.ToString().ShouldBe("a=1, b=2");
+        dict.ToString().ShouldBe("Dictionary(2 members)");
+    }
+
+    [Fact]
+    public void NullMembers_AreRejectedByAllEntryPoints()
+    {
+        var dictionary = new StructuredFieldDictionary();
+        Should.Throw<ArgumentNullException>(() => dictionary.Add("a", (BareItem)null!));
+        Should.Throw<ArgumentNullException>(() => dictionary["a"] = null!);
+        Should.Throw<ArgumentNullException>(() => new StructuredFieldDictionary(
+            [new KeyValuePair<string, StructuredFieldMember>("a", null!)]));
+        dictionary.Count.ShouldBe(0);
     }
 }

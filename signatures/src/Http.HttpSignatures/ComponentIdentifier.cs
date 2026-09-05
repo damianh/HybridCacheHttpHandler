@@ -1,7 +1,7 @@
 // Copyright (c) Damian Hickey. All rights reserved.
 // See LICENSE in the project root for license information.
 
-using System.Text;
+using DamianH.Http.StructuredFieldValues;
 
 namespace DamianH.Http.HttpSignatures;
 
@@ -125,49 +125,21 @@ public sealed class ComponentIdentifier : IEquatable<ComponentIdentifier>
     /// The name is serialized as an SF String (quoted), followed by any parameters.
     /// </summary>
     /// <returns>The serialized component identifier, e.g. <c>"@method"</c> or <c>"content-digest";req</c>.</returns>
-    public string Serialize()
-    {
-        var sb = new StringBuilder();
+    public string Serialize() => StructuredFieldSerializer.SerializeItem(ToStructuredFieldItem());
 
-        // Name serialized as SF String (quoted, with escaping)
-        sb.Append('"');
-        foreach (var c in Name)
-        {
-            if (c is '\\' or '"')
-            {
-                sb.Append('\\');
-            }
-            sb.Append(c);
-        }
-        sb.Append('"');
+    internal StructuredFieldItem ToStructuredFieldItem()
+    {
+        var item = new StructuredFieldItem(new StringItem(Name));
 
         // Parameters in canonical order per RFC 9421 §2.1
-        if (Sf) sb.Append(";sf");
-        if (Key is not null)
-        {
-            sb.Append(";key=\"");
-            foreach (var c in Key)
-            {
-                if (c is '\\' or '"') sb.Append('\\');
-                sb.Append(c);
-            }
-            sb.Append('"');
-        }
-        if (Bs) sb.Append(";bs");
-        if (Req) sb.Append(";req");
-        if (Tr) sb.Append(";tr");
-        if (QueryParamName is not null)
-        {
-            sb.Append(";name=\"");
-            foreach (var c in QueryParamName)
-            {
-                if (c is '\\' or '"') sb.Append('\\');
-                sb.Append(c);
-            }
-            sb.Append('"');
-        }
+        if (Sf) item.Parameters.Add("sf", BooleanItem.True);
+        if (Key is not null) item.Parameters.Add("key", new StringItem(Key));
+        if (Bs) item.Parameters.Add("bs", BooleanItem.True);
+        if (Req) item.Parameters.Add("req", BooleanItem.True);
+        if (Tr) item.Parameters.Add("tr", BooleanItem.True);
+        if (QueryParamName is not null) item.Parameters.Add("name", new StringItem(QueryParamName));
 
-        return sb.ToString();
+        return item;
     }
 
     /// <inheritdoc/>

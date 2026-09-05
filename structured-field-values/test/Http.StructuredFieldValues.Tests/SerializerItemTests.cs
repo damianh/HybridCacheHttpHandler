@@ -154,10 +154,8 @@ public class SerializerItemTests
     public void SerializeItem_WithSingleParameter_Success()
     {
         // Arrange
-        var item = new Http.StructuredFieldValues.TokenItem("text/html")
-        {
-            Parameters = new Parameters { { "q", new DecimalItem(0.9m) } }
-        };
+        var item = new StructuredFieldItem(new TokenItem("text/html"),
+            new Parameters { { "q", new DecimalItem(0.9m) } });
 
         // Act
         var output = StructuredFieldSerializer.SerializeItem(item);
@@ -170,14 +168,12 @@ public class SerializerItemTests
     public void SerializeItem_WithMultipleParameters_Success()
     {
         // Arrange
-        var item = new Http.StructuredFieldValues.TokenItem("foo")
-        {
-            Parameters = new Parameters 
+        var item = new StructuredFieldItem(new TokenItem("foo"),
+            new Parameters
             { 
                 { "a", new IntegerItem(1) },
                 { "b", new IntegerItem(2) }
-            }
-        };
+            });
 
         // Act
         var output = StructuredFieldSerializer.SerializeItem(item);
@@ -190,10 +186,8 @@ public class SerializerItemTests
     public void SerializeItem_WithParameterNoValue_Success()
     {
         // Arrange
-        var item = new Http.StructuredFieldValues.TokenItem("foo")
-        {
-            Parameters = new Parameters { { "bar", null } }
-        };
+        var item = new StructuredFieldItem(new TokenItem("foo"),
+            new Parameters { { "bar", BooleanItem.True } });
 
         // Act
         var output = StructuredFieldSerializer.SerializeItem(item);

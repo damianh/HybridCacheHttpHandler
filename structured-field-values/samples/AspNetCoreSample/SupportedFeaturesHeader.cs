@@ -13,5 +13,5 @@ public class SupportedFeaturesHeader
     /// <summary>Mapper for parsing and serializing X-Supported-Features headers.</summary>
     public static readonly StructuredFieldMapper<SupportedFeaturesHeader> Mapper =
         StructuredFieldMapper<SupportedFeaturesHeader>.List(b => b
-            .TokenElements(x => x.Features));
+            .Elements(x => x.Features, type: ItemType.Token));
 }

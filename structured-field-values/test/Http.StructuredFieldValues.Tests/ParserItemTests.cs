@@ -14,8 +14,8 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("42");
 
         // Assert
-        item.ShouldBeOfType<IntegerItem>();
-        var intItem = (IntegerItem)item;
+        item.Value.ShouldBeOfType<IntegerItem>();
+        var intItem = (IntegerItem)item.Value;
         intItem.LongValue.ShouldBe(42);
     }
 
@@ -26,8 +26,8 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("-17");
 
         // Assert
-        item.ShouldBeOfType<IntegerItem>();
-        var intItem = (IntegerItem)item;
+        item.Value.ShouldBeOfType<IntegerItem>();
+        var intItem = (IntegerItem)item.Value;
         intItem.LongValue.ShouldBe(-17);
     }
 
@@ -38,8 +38,8 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("3.14");
 
         // Assert
-        item.ShouldBeOfType<DecimalItem>();
-        var decItem = (DecimalItem)item;
+        item.Value.ShouldBeOfType<DecimalItem>();
+        var decItem = (DecimalItem)item.Value;
         decItem.DecimalValue.ShouldBe(3.14m);
     }
 
@@ -50,8 +50,8 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("\"hello world\"");
 
         // Assert
-        item.ShouldBeOfType<StringItem>();
-        var strItem = (StringItem)item;
+        item.Value.ShouldBeOfType<StringItem>();
+        var strItem = (StringItem)item.Value;
         strItem.StringValue.ShouldBe("hello world");
     }
 
@@ -62,8 +62,8 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("\"hello \\\"world\\\"\"");
 
         // Assert
-        item.ShouldBeOfType<StringItem>();
-        var strItem = (StringItem)item;
+        item.Value.ShouldBeOfType<StringItem>();
+        var strItem = (StringItem)item.Value;
         strItem.StringValue.ShouldBe("hello \"world\"");
     }
 
@@ -74,8 +74,8 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("application/json");
 
         // Assert
-        item.ShouldBeOfType<Http.StructuredFieldValues.TokenItem>();
-        var tokItem = (Http.StructuredFieldValues.TokenItem)item;
+        item.Value.ShouldBeOfType<TokenItem>();
+        var tokItem = (TokenItem)item.Value;
         tokItem.TokenValue.ShouldBe("application/json");
     }
 
@@ -86,8 +86,8 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem(":aGVsbG8=:");
 
         // Assert
-        item.ShouldBeOfType<ByteSequenceItem>();
-        var byteItem = (ByteSequenceItem)item;
+        item.Value.ShouldBeOfType<ByteSequenceItem>();
+        var byteItem = (ByteSequenceItem)item.Value;
         byteItem.Base64Value.ShouldBe("aGVsbG8=");
     }
 
@@ -98,8 +98,8 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("?1");
 
         // Assert
-        item.ShouldBeOfType<BooleanItem>();
-        var boolItem = (BooleanItem)item;
+        item.Value.ShouldBeOfType<BooleanItem>();
+        var boolItem = (BooleanItem)item.Value;
         boolItem.BooleanValue.ShouldBeTrue();
     }
 
@@ -110,8 +110,8 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("?0");
 
         // Assert
-        item.ShouldBeOfType<BooleanItem>();
-        var boolItem = (BooleanItem)item;
+        item.Value.ShouldBeOfType<BooleanItem>();
+        var boolItem = (BooleanItem)item.Value;
         boolItem.BooleanValue.ShouldBeFalse();
     }
 
@@ -122,7 +122,7 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("text/html;q=0.9");
 
         // Assert
-        item.ShouldBeOfType<Http.StructuredFieldValues.TokenItem>();
+        item.Value.ShouldBeOfType<TokenItem>();
         item.Parameters.Count.ShouldBe(1);
         item.Parameters.ContainsKey("q").ShouldBeTrue();
         
@@ -138,7 +138,7 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("foo;a=1;b=2");
 
         // Assert
-        item.ShouldBeOfType<Http.StructuredFieldValues.TokenItem>();
+        item.Value.ShouldBeOfType<TokenItem>();
         item.Parameters.Count.ShouldBe(2);
         item.Parameters["a"].ShouldBeOfType<IntegerItem>();
         item.Parameters["b"].ShouldBeOfType<IntegerItem>();
@@ -151,10 +151,10 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("foo;bar");
 
         // Assert
-        item.ShouldBeOfType<Http.StructuredFieldValues.TokenItem>();
+        item.Value.ShouldBeOfType<TokenItem>();
         item.Parameters.Count.ShouldBe(1);
         item.Parameters.ContainsKey("bar").ShouldBeTrue();
-        item.Parameters["bar"].ShouldBeNull();
+        item.Parameters["bar"].ShouldBeSameAs(BooleanItem.True);
     }
 
     [Fact]
@@ -164,8 +164,8 @@ public class ParserItemTests
         var item = StructuredFieldParser.ParseItem("  42  ");
 
         // Assert
-        item.ShouldBeOfType<IntegerItem>();
-        ((IntegerItem)item).LongValue.ShouldBe(42);
+        item.Value.ShouldBeOfType<IntegerItem>();
+        ((IntegerItem)item.Value).LongValue.ShouldBe(42);
     }
 
     [Fact]

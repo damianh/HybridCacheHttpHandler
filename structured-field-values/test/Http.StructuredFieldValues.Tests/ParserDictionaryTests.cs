@@ -26,8 +26,8 @@ public class ParserDictionaryTests
         // Assert
         dict.Count.ShouldBe(1);
         dict.ContainsKey("a").ShouldBeTrue();
-        dict["a"].Item.ShouldBeOfType<IntegerItem>();
-        ((IntegerItem)dict["a"].Item).LongValue.ShouldBe(1);
+        dict["a"].Item.Value.ShouldBeOfType<IntegerItem>();
+        ((IntegerItem)dict["a"].Item.Value).LongValue.ShouldBe(1);
     }
 
     [Fact]
@@ -38,9 +38,9 @@ public class ParserDictionaryTests
 
         // Assert
         dict.Count.ShouldBe(3);
-        ((IntegerItem)dict["a"].Item).LongValue.ShouldBe(1);
-        ((IntegerItem)dict["b"].Item).LongValue.ShouldBe(2);
-        ((IntegerItem)dict["c"].Item).LongValue.ShouldBe(3);
+        ((IntegerItem)dict["a"].Item.Value).LongValue.ShouldBe(1);
+        ((IntegerItem)dict["b"].Item.Value).LongValue.ShouldBe(2);
+        ((IntegerItem)dict["c"].Item.Value).LongValue.ShouldBe(3);
     }
 
     [Fact]
@@ -51,9 +51,9 @@ public class ParserDictionaryTests
 
         // Assert
         dict.Count.ShouldBe(3);
-        dict["a"].Item.ShouldBeOfType<IntegerItem>();
-        dict["b"].Item.ShouldBeOfType<StringItem>();
-        dict["c"].Item.ShouldBeOfType<Http.StructuredFieldValues.TokenItem>();
+        dict["a"].Item.Value.ShouldBeOfType<IntegerItem>();
+        dict["b"].Item.Value.ShouldBeOfType<StringItem>();
+        dict["c"].Item.Value.ShouldBeOfType<TokenItem>();
     }
 
     [Fact]
@@ -64,8 +64,8 @@ public class ParserDictionaryTests
 
         // Assert
         dict.Count.ShouldBe(1);
-        dict["foo"].Item.ShouldBeOfType<BooleanItem>();
-        ((BooleanItem)dict["foo"].Item).BooleanValue.ShouldBeTrue();
+        dict["foo"].Item.Value.ShouldBeOfType<BooleanItem>();
+        ((BooleanItem)dict["foo"].Item.Value).BooleanValue.ShouldBeTrue();
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public class ParserDictionaryTests
 
         // Assert
         dict.Count.ShouldBe(1);
-        dict["foo"].Item.ShouldBeOfType<BooleanItem>();
+        dict["foo"].Item.Value.ShouldBeOfType<BooleanItem>();
         dict["foo"].Item.Parameters.ContainsKey("bar").ShouldBeTrue();
     }
 
@@ -93,18 +93,18 @@ public class ParserDictionaryTests
     }
 
     [Fact]
-    public void ParseDictionary_RealWorldCacheControl_Success()
+    public void ParseDictionary_RealWorldPriority_Success()
     {
         // Arrange & Act
-        var dict = StructuredFieldParser.ParseDictionary("max-age=3600, private");
+        var dict = StructuredFieldParser.ParseDictionary("u=3, i");
 
         // Assert
         dict.Count.ShouldBe(2);
-        dict["max-age"].Item.ShouldBeOfType<IntegerItem>();
-        ((IntegerItem)dict["max-age"].Item).LongValue.ShouldBe(3600);
+        dict["u"].Item.Value.ShouldBeOfType<IntegerItem>();
+        ((IntegerItem)dict["u"].Item.Value).LongValue.ShouldBe(3);
         
-        dict["private"].Item.ShouldBeOfType<BooleanItem>();
-        ((BooleanItem)dict["private"].Item).BooleanValue.ShouldBeTrue();
+        dict["i"].Item.Value.ShouldBeOfType<BooleanItem>();
+        ((BooleanItem)dict["i"].Item.Value).BooleanValue.ShouldBeTrue();
     }
 
     [Fact]
@@ -115,8 +115,8 @@ public class ParserDictionaryTests
 
         // Assert
         dict.Count.ShouldBe(2);
-        ((IntegerItem)dict["a"].Item).LongValue.ShouldBe(1);
-        ((IntegerItem)dict["b"].Item).LongValue.ShouldBe(2);
+        ((IntegerItem)dict["a"].Item.Value).LongValue.ShouldBe(1);
+        ((IntegerItem)dict["b"].Item.Value).LongValue.ShouldBe(2);
     }
 
     [Fact]

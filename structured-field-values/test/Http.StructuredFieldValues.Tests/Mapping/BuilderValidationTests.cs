@@ -38,15 +38,16 @@ public class BuilderValidationTests
     }
 
     [Fact]
-    public void TryParse_EmptyString_ReturnsFalse()
+    public void TryParse_EmptyOptionalDictionary_ReturnsTrue()
     {
         var mapper = StructuredFieldMapper<PriorityHeader>.Dictionary(b => b
             .Member("u", x => x.Urgency));
 
         var result = mapper.TryParse("", out var value);
 
-        result.ShouldBeFalse();
-        value.ShouldBeNull();
+        result.ShouldBeTrue();
+        value.ShouldNotBeNull();
+        value.Urgency.ShouldBeNull();
     }
 
     [Fact]
@@ -76,8 +77,8 @@ public class BuilderValidationTests
     [Theory]
     [InlineData("u")]         // lowercase alpha
     [InlineData("*")]         // star start
-    [InlineData("cache-control")] // hyphen
-    [InlineData("max_age")]   // underscore
+    [InlineData("some-key")]  // hyphen
+    [InlineData("some_key")]  // underscore
     [InlineData("a.b")]       // dot
     [InlineData("x1")]        // digit after alpha
     public void Dictionary_ValidKey_Succeeds(string key)
@@ -94,7 +95,7 @@ public class BuilderValidationTests
     {
         Should.Throw<ArgumentException>(() =>
             StructuredFieldMapper<EncodingItem>.Item(b => b
-                .TokenValue(x => x.Encoding)
+                .Value(x => x.Encoding, type: ItemType.Token)
                 .Parameter(key, x => x.Quality)));
     }
 }

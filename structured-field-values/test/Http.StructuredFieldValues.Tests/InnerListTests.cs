@@ -29,9 +29,9 @@ public class InnerListTests
         var innerList = new InnerList(items);
         
         innerList.Count.ShouldBe(3);
-        innerList[0].ShouldBeOfType<IntegerItem>();
-        innerList[1].ShouldBeOfType<IntegerItem>();
-        innerList[2].ShouldBeOfType<IntegerItem>();
+        innerList[0].Value.ShouldBeOfType<IntegerItem>();
+        innerList[1].Value.ShouldBeOfType<IntegerItem>();
+        innerList[2].Value.ShouldBeOfType<IntegerItem>();
     }
 
     [Fact]
@@ -51,10 +51,10 @@ public class InnerListTests
     public void Constructor_WithNullItems_ThrowsArgumentNullException() => Should.Throw<ArgumentNullException>(() => new InnerList(null!));
 
     [Fact]
-    public void Constructor_WithNullParameters_ThrowsArgumentNullException()
+    public void Constructor_WithNullParameters_CreatesOwnedEmptyParameters()
     {
         var items = new StructuredFieldItem[] { new IntegerItem(1) };
-        Should.Throw<ArgumentNullException>(() => new InnerList(items, null!));
+        new InnerList(items, null).Parameters.Count.ShouldBe(0);
     }
 
     [Fact]
@@ -64,14 +64,15 @@ public class InnerListTests
         innerList.Add(new IntegerItem(42));
         
         innerList.Count.ShouldBe(1);
-        innerList[0].ShouldBeOfType<IntegerItem>();
+        innerList[0].Value.ShouldBeOfType<IntegerItem>();
     }
 
     [Fact]
     public void Add_NullItem_ThrowsArgumentNullException()
     {
         var innerList = new InnerList();
-        Should.Throw<ArgumentNullException>(() => innerList.Add(null!));
+        Should.Throw<ArgumentNullException>(() => innerList.Add((StructuredFieldItem)null!));
+        Should.Throw<ArgumentNullException>(() => innerList.Add((BareItem)null!));
     }
 
     [Fact]
@@ -116,8 +117,8 @@ public class InnerListTests
         
         var item = innerList[0];
         
-        item.ShouldBeOfType<IntegerItem>();
-        ((IntegerItem)item).LongValue.ShouldBe(42);
+        item.Value.ShouldBeOfType<IntegerItem>();
+        ((IntegerItem)item.Value).LongValue.ShouldBe(42);
     }
 
     [Fact]
@@ -133,20 +134,20 @@ public class InnerListTests
     }
 
     [Fact]
-    public void ToString_EmptyList_ReturnsEmptyParentheses()
+    public void ToString_EmptyList_IsDiagnostic()
     {
         var innerList = new InnerList();
-        innerList.ToString().ShouldBe("()");
+        innerList.ToString().ShouldBe("InnerList(0 items; 0 parameters)");
     }
 
     [Fact]
-    public void ToString_WithItems_ReturnsFormattedString()
+    public void ToString_WithItems_IsDiagnostic()
     {
         var innerList = new InnerList();
         innerList.Add(new IntegerItem(1));
         innerList.Add(new IntegerItem(2));
         
-        innerList.ToString().ShouldBe("(1 2)");
+        innerList.ToString().ShouldBe("InnerList(2 items; 0 parameters)");
     }
 
     [Fact]
@@ -156,26 +157,38 @@ public class InnerListTests
         innerList.Add(new IntegerItem(1));
         innerList.Parameters.Add("test", new IntegerItem(42));
         
-        innerList.ToString().ShouldBe("(1);test=42");
+        innerList.ToString().ShouldBe("InnerList(1 items; 1 parameters)");
     }
 
     [Fact]
-    public void ToString_WithParameterNoValue_IncludesFlag()
+    public void Serialize_WithTrueParameter_IncludesFlag()
     {
         var innerList = new InnerList();
         innerList.Add(new IntegerItem(1));
-        innerList.Parameters.Add("flag", null);
+        innerList.Parameters.Add("flag");
         
-        innerList.ToString().ShouldBe("(1);flag");
+        StructuredFieldSerializer.SerializeInnerList(innerList).ShouldBe("(1);flag");
     }
 
     [Fact]
-    public void ParametersInit_AllowsInitialization()
+    public void Constructor_CopiesParameters()
     {
         var parameters = new Parameters { { "test", new IntegerItem(42) } };
 
-        var innerList = new InnerList { Parameters = parameters };
+        var innerList = new InnerList([], parameters);
+        parameters.Clear();
         
         innerList.Parameters["test"].ShouldBeOfType<IntegerItem>();
+    }
+
+    [Fact]
+    public void NullElements_AreRejectedAtomically()
+    {
+        var list = new InnerList([new IntegerItem(1)]);
+        Should.Throw<ArgumentNullException>(() => new InnerList([new IntegerItem(2), null!]));
+        Should.Throw<ArgumentNullException>(() => list.AddRange([new IntegerItem(2), null!]));
+        Should.Throw<ArgumentNullException>(() => list[0] = null!);
+        list.Count.ShouldBe(1);
+        list[0].Value.ShouldBe(new IntegerItem(1));
     }
 }

@@ -1,6 +1,12 @@
 # DamianH.Http.StructuredFieldValues
 
-RFC 8941/9651 parser, serializer, and POCO mapper for HTTP Structured Field Values.
+RFC 9651 parser, serializer, and POCO mapper for HTTP Structured Field Values,
+including the six original RFC 8941 types plus Dates and Display Strings.
+
+Use this library only for fields defined as Structured Fields, such as `Priority`
+and `Accept-CH`, or custom fields with a declared structured type. `Cache-Control`
+is **not** a Structured Field; use `System.Net.Http.Headers.CacheControlHeaderValue`
+for its grammar.
 
 ## Table of Contents
 
@@ -19,6 +25,8 @@ RFC 8941/9651 parser, serializer, and POCO mapper for HTTP Structured Field Valu
   - [ListBuilder\<T\>](#listbuildert)
   - [ItemBuilder\<T\>](#itembuildert)
 - [Type Mapping](#type-mapping)
+- [Ownership and Equality](#ownership-and-equality)
+- [Breaking Changes](#breaking-changes)
 - [Samples](#samples)
 
 ## Installation
@@ -34,16 +42,22 @@ dotnet add package DamianH.Http.StructuredFieldValues
 ```csharp
 using DamianH.Http.StructuredFieldValues;
 
-// Parse a structured dictionary (e.g. Cache-Control, Priority)
+// Parse a Priority structured dictionary
 StructuredFieldDictionary dict = StructuredFieldParser.ParseDictionary("u=3, i");
-// dict["u"] → IntegerItem(3)
-// dict["i"] → BooleanItem(true)  (bare key = ?1)
+// dict["u"].Item.Value is IntegerItem(3)
+// dict["i"].Item.Value is BooleanItem(true)  (bare key = ?1)
 
 // Parse a structured list
 StructuredFieldList list = StructuredFieldParser.ParseList("a, b, c");
 
 // Parse a single item
 StructuredFieldItem item = StructuredFieldParser.ParseItem("42");
+
+var eventTime = StructuredFieldParser.ParseItem("@1659578233");
+// ((DateItem)eventTime.Value).UnixSeconds == 1659578233
+
+var label = StructuredFieldParser.ParseItem("%\"caf%c3%a9\"");
+// label.Value is DisplayStringItem, containing Unicode text
 ```
 
 ### Serializing
@@ -51,17 +65,31 @@ StructuredFieldItem item = StructuredFieldParser.ParseItem("42");
 ```csharp
 var dict = new StructuredFieldDictionary
 {
-    ["max-age"] = DictionaryMember.FromItem(new IntegerItem(3600)),
-    ["no-cache"] = DictionaryMember.FromItem(BooleanItem.True)
+    ["u"] = StructuredFieldMember.FromItem(new IntegerItem(3)),
+    ["i"] = StructuredFieldMember.FromItem(BooleanItem.True)
 };
 
 string header = StructuredFieldSerializer.SerializeDictionary(dict);
-// "max-age=3600, no-cache"
+// "u=3, i"
+
+var item = new StructuredFieldItem(new TokenItem("gzip"));
+item.Parameters.Add("enabled", BooleanItem.True);
+string member = StructuredFieldSerializer.SerializeItem(item);
+// "gzip;enabled"
 ```
+
+**`ToString()` is diagnostic-only, not wire output.** Always use
+`StructuredFieldSerializer` or the mapper's `Serialize` method when writing
+headers. Diagnostic strings need not be quoted, complete, canonical, or
+round-trippable.
 
 ### POCO Mapping
 
-The mapper converts RFC 8941 structured values to and from plain C# objects. Mappers are thread-safe and should be stored in `static readonly` fields.
+The mapper converts structured values to and from plain C# objects. Mappers
+snapshot their configuration and are reusable across threads; store them in
+`static readonly` fields. Mapped models must be classes with a public
+parameterless constructor and directly accessible readable/writable properties
+(including `init` properties). Concurrent mutation of the same model is not supported.
 
 ```csharp
 // Define a POCO
@@ -96,35 +124,47 @@ if (PriorityHeader.Mapper.TryParse(request.Headers["Priority"], out var p))
 
 ### StructuredFieldParser
 
-Static class for parsing RFC 8941 structured field values.
+Static class for parsing RFC 9651 structured field values.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ParseItem(string input)` | `StructuredFieldItem` | Parses a bare item with optional parameters (RFC 8941 §4.2.3) |
+| `ParseItem(string input)` | `StructuredFieldItem` | Parses an item with optional parameters |
+| `ParseBareItem(string input)` | `BareItem` | Parses a scalar, rejecting parameters |
 | `ParseList(string input)` | `StructuredFieldList` | Parses a list of items and/or inner lists (RFC 8941 §4.2.1) |
 | `ParseDictionary(string input)` | `StructuredFieldDictionary` | Parses a dictionary of key→member pairs (RFC 8941 §4.2.2) |
 
 All methods throw `ArgumentNullException` for null input and `StructuredFieldParseException` for malformed input.
+Empty strings are valid lists/dictionaries but not items. Duplicate dictionary
+and parameter keys keep their original position and use the last parsed value.
+Implicit Boolean true parameters (`;flag`) and explicit ones (`;flag=?1`) produce
+the same bare Boolean value.
 
 ### StructuredFieldSerializer
 
-Static class for serializing RFC 8941 structured field values to their canonical string form.
+Static class for serializing structured field values to their canonical wire form.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `SerializeItem(StructuredFieldItem item)` | `string` | Serializes an item with parameters (RFC 8941 §4.1.3) |
 | `SerializeList(StructuredFieldList list)` | `string` | Serializes a list (RFC 8941 §4.1.1) |
 | `SerializeDictionary(StructuredFieldDictionary dictionary)` | `string` | Serializes a dictionary (RFC 8941 §4.1.2) |
+| `SerializeBareItem(BareItem value)` | `string` | Serializes a scalar without parameters |
+| `SerializeInnerList(InnerList list)` | `string` | Serializes a parenthesized inner list with its parameters |
+| `SerializeMember(StructuredFieldMember member)` | `string` | Serializes an item or inner list without a dictionary key |
+
+All methods use the same wire writer. Parameters and dictionary entries retain
+insertion order, and Boolean true uses shorthand where permitted.
 
 ### StructuredFieldMapper\<T\>
 
-A cached, reusable mapper that converts an RFC 8941 structured field value to and from a POCO of type `T`. `T` must have a public parameterless constructor.
+A cached, reusable mapper that converts a structured field value to and from a
+POCO of type `T`, constrained to `class, new()`.
 
 **Factory methods** (choose based on the RFC 8941 field type):
 
 | Factory | When to use |
 |---------|------------|
-| `StructuredFieldMapper<T>.Dictionary(Action<DictionaryBuilder<T>> configure)` | Field is an RFC 8941 Dictionary (e.g. `Cache-Control`, `Priority`) |
+| `StructuredFieldMapper<T>.Dictionary(Action<DictionaryBuilder<T>> configure)` | Field is a Dictionary (e.g. `Priority`) |
 | `StructuredFieldMapper<T>.List(Action<ListBuilder<T>> configure)` | Field is an RFC 8941 List |
 | `StructuredFieldMapper<T>.Item(Action<ItemBuilder<T>> configure)` | Field is an RFC 8941 Item |
 
@@ -136,27 +176,48 @@ A cached, reusable mapper that converts an RFC 8941 structured field value to an
 | `bool TryParse(string? input, out T? result)` | Returns false instead of throwing for missing or malformed input. |
 | `string Serialize(T value)` | Serializes the POCO to its canonical RFC 8941 string. |
 
+`TryParse` agrees with `Parse` for valid input: an empty list or optional-only
+dictionary succeeds; an empty dictionary with required mappings fails. `null`
+means missing input and returns false. Malformed values and mapping mismatches
+return false, but configuration and user property-accessor exceptions are not
+silently swallowed.
+
+The mapper is a **projection**, not a lossless document editor: unknown
+members/parameters are ignored and are not retained on serialization. Use the
+object model when preserving all fields and their order matters.
+
 ### Item Types
 
-All item types extend `StructuredFieldItem` and carry a `Parameters` collection.
+All scalar types extend immutable `BareItem`; they do not carry parameters.
+`StructuredFieldItem` wraps a bare value in its `.Value` property and owns one
+mutable `.Parameters` collection.
 
-| Type | CLR value | RFC 8941 wire format | Example |
+| Type | CLR value | Wire format | Example |
 |------|-----------|---------------------|---------|
 | `IntegerItem` | `long` via `.LongValue` | Signed integer | `42`, `-1` |
-| `DecimalItem` | `decimal` via `.DecimalValue` | Decimal (up to 3 d.p.) | `3.14` |
+| `DecimalItem` | `decimal` via `.DecimalValue` | Up to 12 integer digits and 3 fractional digits | `3.14` |
 | `StringItem` | `string` via `.StringValue` | Quoted string | `"hello"` |
 | `TokenItem` | `string` via `.TokenValue` | Unquoted token | `gzip`, `*` |
-| `ByteSequenceItem` | `byte[]` via `.ByteValue` | `:base64:` | `:aGVsbG8=:` |
+| `ByteSequenceItem` | Read-only `.Bytes`; copy out with `.ToArray()` | `:base64:` | `:aGVsbG8=:` |
 | `BooleanItem` | `bool` via `.BooleanValue` | `?0` / `?1` | `?1` |
+| `DateItem` | Unix seconds as `long` via `.UnixSeconds` | `@` followed by an integer | `@1659578233` |
+| `DisplayStringItem` | Unicode `string` via `.StringValue` | UTF-8 percent encoding inside `%"..."` | `%"caf%c3%a9"` |
+
+Decimals range from `-999999999999.999` through `999999999999.999`.
+Construction rejects excess fractional precision rather than silently rounding.
+Dates support the full signed 15-digit integer range, not just the narrower
+`DateTimeOffset` range. Display Strings reject malformed Unicode rather than
+silently replacing it; ordinary Strings remain printable ASCII-only.
 
 ### Collection Types
 
 | Type | Description |
 |------|-------------|
-| `StructuredFieldList` | Ordered list of `ListMember` (item or inner list). Supports `Add`, `AddRange`, count, and indexer access. |
-| `StructuredFieldDictionary` | Ordered dictionary of `string` → `DictionaryMember`. Implements `IEnumerable<KeyValuePair<string, DictionaryMember>>` and supports indexer by key. |
+| `StructuredFieldList` | Ordered list of `StructuredFieldMember` (item or inner list). Supports `Add`, `AddRange`, count, and indexer access. |
+| `StructuredFieldDictionary` | Ordered dictionary of `string` to `StructuredFieldMember`. Supports enumeration and indexer access. |
 | `InnerList` | A parenthesised list of `StructuredFieldItem` entries, with its own `Parameters`. |
-| `Parameters` | An ordered list of key → optional `StructuredFieldItem?` pairs attached to items or inner lists. |
+| `Parameters` | Ordered map of valid keys to non-null `BareItem` values. A present flag is `BooleanItem.True`; absence means no key. |
+| `StructuredFieldMember` | Shared item-or-inner-list wrapper. Its parameters belong to the contained node, not a separate member-level collection. |
 
 ### DictionaryBuilder\<T\>
 
@@ -164,11 +225,12 @@ Configures mappings from an RFC 8941 Dictionary to POCO properties.
 
 | Method | Description |
 |--------|-------------|
-| `.Member(key, x => x.Prop)` | Maps a key to a primitive property. Type inferred from CLR type (see [Type Mapping](#type-mapping)). Nullable → optional; non-nullable → required. |
-| `.TokenMember(key, x => x.Prop)` | Maps a key to a `string?` property serialized as an RFC 8941 Token. Always optional. |
-| `.InnerList(key, x => x.Prop)` | Maps a key to an `IReadOnlyList<TElement>?` property (primitive elements). |
-| `.TokenInnerList(key, x => x.Prop)` | Maps a key to an `IReadOnlyList<string>?` property where strings are serialized as tokens. |
+| `.Member(key, x => x.Prop, type: ..., presence: ...)` | Maps a primitive property; type and presence arguments are optional. |
+| `.InnerList(key, x => x.Prop, type: ..., presence: ...)` | Maps an `IReadOnlyList<TElement>?` of primitive elements. Optional by default. |
 | `.InnerList(key, x => x.Prop, elementMapper)` | Maps a key to an `IReadOnlyList<TElement>?` property where each element is mapped by a nested `StructuredFieldMapper<TElement>`. |
+
+Nested element mappers must be created with `Item`; passing a list or
+dictionary mapper fails during configuration.
 
 ### ListBuilder\<T\>
 
@@ -176,8 +238,11 @@ Configures mappings from an RFC 8941 List to a POCO.
 
 | Method | Description |
 |--------|-------------|
-| `.Elements(x => x.Prop)` | Maps list elements to an `IReadOnlyList<TElement>?` property. |
-| `.TokenElements(x => x.Prop)` | Maps list elements to an `IReadOnlyList<string>?` property where strings are tokens. |
+| `.Elements(x => x.Prop, type: ...)` | Maps primitive elements to an `IReadOnlyList<TElement>` property; the wire type is optional. |
+| `.Elements(x => x.Prop, elementMapper)` | Maps items with parameters using a nested item mapper. |
+
+A null top-level collection serializes as an empty list. Null elements are
+rejected, not dropped. This mapper does not support inner lists as list members.
 
 ### ItemBuilder\<T\>
 
@@ -185,29 +250,96 @@ Configures mappings from an RFC 8941 Item to a POCO.
 
 | Method | Description |
 |--------|-------------|
-| `.Value(x => x.Prop)` | Maps the bare item value to a POCO property. |
-| `.TokenValue(x => x.Prop)` | Maps the bare item value to a `string` property serialized as a token. |
-| `.Parameter(paramKey, x => x.Prop)` | Maps a parameter to a POCO property. |
-| `.TokenParameter(paramKey, x => x.Prop)` | Maps a parameter to a `string` property serialized as a token. |
+| `.Value(x => x.Prop, type: ...)` | Maps the required bare item value; the wire type is optional. |
+| `.Parameter(paramKey, x => x.Prop, type: ..., presence: ...)` | Maps a parameter; wire type and presence are optional. |
+
+Exactly one value mapping is required. A null item value throws on serialization,
+even if its CLR property is nullable. Boolean flags require an explicit Boolean
+value mapping; there are no placeholder values.
 
 ## Type Mapping
 
-The mapper infers RFC 8941 types from CLR property types:
+The mapper infers types from CLR property types. An explicit `type: ItemType.X`
+selects another compatible wire representation; incompatible combinations fail
+at mapper construction.
 
-| CLR Type | RFC 8941 Type | Notes |
+| CLR Type | Structured Type | Notes |
 |----------|--------------|-------|
 | `int`, `long` | Integer | Range: −999,999,999,999,999 to 999,999,999,999,999 |
-| `decimal` | Decimal | Up to 3 decimal places |
+| `decimal` | Decimal | Up to 12 integer digits and 3 fractional places |
 | `bool` | Boolean | `?1` / `?0`; bare key in dictionaries = `?1` |
-| `string` | String | Quoted. Use `TokenMember`/`TokenValue` for token semantics |
+| `string` | String | Override with `type: ItemType.Token` or `ItemType.DisplayString` |
 | `byte[]` | Byte Sequence | `:base64:` encoding |
-| Nullable (`int?`, `bool?`, …) | Optional | Missing member/parameter → property left at `default` |
-| Non-nullable (`int`, `bool`, …) | Required | Missing member/parameter → `StructuredFieldParseException` |
+| `long` with `type: ItemType.Date` | Date | Full-range Unix seconds; default `long` mapping remains Integer |
+
+Presence is configured independently using `MappingPresence` from
+`DamianH.Http.StructuredFieldValues.Mapping`:
+
+| Presence | Behavior |
+|----------|----------|
+| `Auto` (default) | Non-nullable value properties are required; nullable value and all reference properties are optional. Inner lists are optional. |
+| `Required` | Missing members/parameters fail parsing; null properties fail serialization. |
+| `Optional` | Missing members/parameters leave property initializers unchanged; null properties are omitted. |
+
+C# reference-type nullable annotations do not change these defaults. An optional
+non-nullable value property cannot distinguish absence from its default value.
+
+```csharp
+using DamianH.Http.StructuredFieldValues;
+using DamianH.Http.StructuredFieldValues.Mapping;
+
+public class EventMetadata
+{
+    public string Label { get; init; } = "";
+    public string? Kind { get; init; }
+    public long Timestamp { get; init; }
+
+    public static readonly StructuredFieldMapper<EventMetadata> Mapper =
+        StructuredFieldMapper<EventMetadata>.Dictionary(b => b
+            .Member("label", x => x.Label,
+                type: ItemType.DisplayString, presence: MappingPresence.Required)
+            .Member("kind", x => x.Kind, type: ItemType.Token)
+            .Member("at", x => x.Timestamp, type: ItemType.Date));
+}
+```
+
+## Ownership and Equality
+
+Bare values have value equality and no mutable state. Byte sequences copy
+incoming arrays, and copy-out operations cannot change the stored bytes or hash.
+Boolean singletons are safe to reuse as bare values.
+
+Items, inner lists, parameters, and collections are mutable and use reference
+equality. Item/inner-list constructors copy supplied parameter collections.
+Mutate parameters through their owning node; a `StructuredFieldMember` does not
+introduce a second collection. Explicitly sharing a mutable item between lists
+is possible, so modifying that item is visible to both lists.
+
+## Breaking Changes
+
+- Scalar classes now derive from `BareItem`, not `StructuredFieldItem`. Wrap
+  values in `new StructuredFieldItem(bareValue)` before attaching parameters;
+  inspect parsed scalars through `item.Value`.
+- Replace `ListMember` and `DictionaryMember` with `StructuredFieldMember`.
+  Supply parameters to the item or inner-list constructor, not `FromItem`.
+- Replace null-valued parameters with `BooleanItem.True`. `TryGetValue` returning
+  true always yields a non-null bare value.
+- Replace mutable byte-array access with `.Bytes` for reading or `.ToArray()`
+  for a copy.
+- Replace `TokenMember`, `TokenValue`, `TokenParameter`, `TokenElements`, and
+  `TokenInnerList` with the corresponding ordinary method and
+  `type: ItemType.Token`.
+- Mapper models and nested models must be classes; propagate `class, new()`
+  constraints through generic helpers. Invalid mappings fail at construction.
+- Empty list/dictionary input can now succeed in `TryParse`. HTTP helpers
+  distinguish a missing header from a present empty value.
+- Explicit Boolean true parameters serialize in shorthand. `ToString()` remains
+  diagnostic-only and must not be used as a substitute for serialization.
 
 ## Samples
 
-- [`samples/HttpClientSample`](../../samples/HttpClientSample) — `HttpClient` integration showing mapper definitions for `Priority` (RFC 9218) and `Cache-Control` headers, with helpers for reading and writing structured headers on `HttpRequestMessage` and `HttpResponseMessage`.
+- [`samples/HttpClientSample`](samples/HttpClientSample) — `HttpClient` integration for `Priority` (RFC 9218), with helpers for reading and writing structured headers on `HttpRequestMessage` and `HttpResponseMessage`.
 
-- [`samples/AspNetCoreSample`](../../samples/AspNetCoreSample) — ASP.NET Core integration showing the same mapper pattern applied to `HttpRequest` and `HttpResponse` extension methods.
+- [`samples/AspNetCoreSample`](samples/AspNetCoreSample) — ASP.NET Core integration for `Priority`, `Accept-CH`, and a custom token-list field.
 
 > **Note**: The sample projects target .NET 10 with `LangVersion=preview` and use C# 14 extension declaration syntax.

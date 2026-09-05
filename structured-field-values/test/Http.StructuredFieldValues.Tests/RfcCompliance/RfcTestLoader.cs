@@ -6,26 +6,36 @@ using System.Text.Json;
 namespace DamianH.Http.StructuredFieldValues.RfcCompliance;
 
 /// <summary>
-/// Helper class for loading RFC test cases from JSON files.
+/// Loads every checked-in RFC fixture copied to the test output directory.
 /// </summary>
 public static class RfcTestLoader
 {
-    /// <summary>
-    /// Loads test cases from a JSON file in the RfcTests directory.
-    /// </summary>
-    /// <param name="fileName">The name of the JSON file (e.g., "item.json")</param>
-    /// <returns>Array of test cases.</returns>
-    public static RfcTestCase[] LoadTests(string fileName)
-    {
-        var filePath = Path.Combine("RfcTests", fileName);
-        var json = File.ReadAllText(filePath);
-        var testCases = JsonSerializer.Deserialize<RfcTestCase[]>(json);
-        return testCases!;
-    }
+    private static readonly string FixtureDirectory = Path.Combine(AppContext.BaseDirectory, "RfcTests");
 
-    /// <summary>
-    /// Converts test cases to xUnit theory data.
-    /// </summary>
-    public static IEnumerable<object[]> ToTheoryData(RfcTestCase[] tests)
-        => tests.Select(t => new object[] { t });
+    public static IReadOnlyDictionary<string, RfcTestCase[]> Fixtures { get; } = LoadFixtures();
+
+    private static IReadOnlyDictionary<string, RfcTestCase[]> LoadFixtures()
+    {
+        var fixtures = new Dictionary<string, RfcTestCase[]>(StringComparer.Ordinal);
+        foreach (var path in Directory.EnumerateFiles(FixtureDirectory, "*.json", SearchOption.AllDirectories)
+                     .Order(StringComparer.Ordinal))
+        {
+            var fileName = Path.GetRelativePath(FixtureDirectory, path);
+            var tests = JsonSerializer.Deserialize<RfcTestCase[]>(File.ReadAllText(path))
+                ?? throw new InvalidDataException($"Fixture '{fileName}' contains no test array.");
+            if (tests.Length == 0)
+            {
+                throw new InvalidDataException($"Fixture '{fileName}' contains no test cases.");
+            }
+
+            fixtures.Add(fileName, tests);
+        }
+
+        if (fixtures.Count == 0)
+        {
+            throw new InvalidDataException($"No RFC fixtures found in '{FixtureDirectory}'.");
+        }
+
+        return fixtures;
+    }
 }

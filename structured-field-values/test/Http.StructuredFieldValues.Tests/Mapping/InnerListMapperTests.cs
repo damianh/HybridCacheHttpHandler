@@ -15,8 +15,8 @@ public class InnerListMapperTests
 
     private static readonly StructuredFieldMapper<FeaturePolicy> FpMapper =
         StructuredFieldMapper<FeaturePolicy>.Dictionary(b => b
-            .TokenInnerList("camera", x => x.Camera)
-            .TokenInnerList("microphone", x => x.Microphone));
+            .InnerList("camera", x => x.Camera, type: ItemType.Token)
+            .InnerList("microphone", x => x.Microphone, type: ItemType.Token));
 
     [Fact]
     public void Parse_DictionaryWithTokenInnerLists_ReturnsExpectedValues()

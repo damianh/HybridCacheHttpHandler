@@ -4,7 +4,7 @@
 namespace DamianH.Http.StructuredFieldValues.Mapping;
 
 /// <summary>
-/// Identifies the RFC 8941 bare item type for a mapped property.
+/// Identifies the RFC 9651 bare item type for a mapped property.
 /// </summary>
 internal enum ValueKind
 {
@@ -25,4 +25,10 @@ internal enum ValueKind
 
     /// <summary>Base64 byte sequence (maps to <see cref="ByteSequenceItem"/>).</summary>
     ByteSequence,
+
+    /// <summary>Unix seconds (maps to <see cref="DateItem"/>).</summary>
+    Date,
+
+    /// <summary>Unicode display string (maps to <see cref="DisplayStringItem"/>).</summary>
+    DisplayString,
 }

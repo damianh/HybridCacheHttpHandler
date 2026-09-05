@@ -7,7 +7,7 @@ namespace DamianH.Http.StructuredFieldValues;
 /// Represents an integer item in a structured field value.
 /// RFC 8941 defines integers in the range of -999,999,999,999,999 to 999,999,999,999,999.
 /// </summary>
-public sealed class IntegerItem : StructuredFieldItem
+public sealed class IntegerItem : BareItem
 {
     /// <summary>
     /// The minimum allowed value for an RFC 8941 integer.
@@ -53,7 +53,7 @@ public sealed class IntegerItem : StructuredFieldItem
     public override ItemType Type => ItemType.Integer;
 
     /// <inheritdoc/>
-    public override string ToString() => _value.ToString();
+    public override string ToString() => _value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) =>

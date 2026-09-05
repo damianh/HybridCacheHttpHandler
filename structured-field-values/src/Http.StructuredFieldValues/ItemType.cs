@@ -4,7 +4,7 @@
 namespace DamianH.Http.StructuredFieldValues;
 
 /// <summary>
-/// Enumeration of item types defined in RFC 8941.
+/// Enumeration of bare item types defined in RFC 9651.
 /// </summary>
 public enum ItemType
 {
@@ -16,7 +16,7 @@ public enum ItemType
 
     /// <summary>
     /// Decimal value (e.g., 4.5, -1.23).
-    /// Up to 12 significant digits with up to 3 decimal places.
+    /// Up to 12 integer digits with up to 3 decimal places.
     /// </summary>
     Decimal,
 
@@ -41,5 +41,11 @@ public enum ItemType
     /// <summary>
     /// Boolean value (e.g., ?1 for true, ?0 for false).
     /// </summary>
-    Boolean
+    Boolean,
+
+    /// <summary>Signed Unix seconds in the full structured integer range.</summary>
+    Date,
+
+    /// <summary>A Unicode string encoded as UTF-8 with percent escapes on the wire.</summary>
+    DisplayString
 }
