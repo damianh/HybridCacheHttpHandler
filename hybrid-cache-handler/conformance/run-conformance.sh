@@ -5,6 +5,7 @@
 # Usage:
 #   ./run-conformance.sh            # run suite, compare against baseline
 #   ./run-conformance.sh --update   # run suite, rewrite the baseline
+#   ./run-conformance.sh --file-system # streaming filesystem mode, same baseline
 set -euo pipefail
 
 CONFORMANCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +17,15 @@ RESULTS="$CONFORMANCE_DIR/results.json"
 BASELINE="$CONFORMANCE_DIR/expected-results.json"
 ORIGIN_PORT="${ORIGIN_PORT:-8000}"
 PROXY_PORT="${PROXY_PORT:-8081}"
+FILE_SYSTEM=false
+UPDATE=false
+for arg in "$@"; do
+  case "$arg" in
+    --file-system) FILE_SYSTEM=true; RESULTS="$CONFORMANCE_DIR/results-filesystem.json" ;;
+    --update) UPDATE=true ;;
+    *) echo "Unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
 
 wait_for_http() {
   local url="$1"
@@ -46,9 +56,12 @@ dotnet build "$PROXY_PROJECT" -v q --nologo
 
 ORIGIN_PID=""
 PROXY_PID=""
+CONTENT_ROOT="$(mktemp -d "$CONFORMANCE_DIR/.content-store-XXXXXXXX")"
 cleanup() {
   [ -n "$PROXY_PID" ] && kill "$PROXY_PID" 2>/dev/null || true
   [ -n "$ORIGIN_PID" ] && kill "$ORIGIN_PID" 2>/dev/null || true
+  [ -n "$PROXY_PID" ] && wait "$PROXY_PID" 2>/dev/null || true
+  rm -rf -- "$CONTENT_ROOT"
 }
 trap cleanup EXIT
 
@@ -58,7 +71,7 @@ echo "Starting suite server on :$ORIGIN_PORT"
 (cd "$SUITE_DIR" && npm_config_port="$ORIGIN_PORT" npm run server) &
 ORIGIN_PID=$!
 echo "Starting ConformanceProxy on :$PROXY_PORT"
-dotnet run --project "$PROXY_PROJECT" --no-build -- --port "$PROXY_PORT" --origin "http://127.0.0.1:$ORIGIN_PORT" &
+dotnet run --project "$PROXY_PROJECT" --no-build -- --port "$PROXY_PORT" --origin "http://127.0.0.1:$ORIGIN_PORT" --file-system "$FILE_SYSTEM" --content-root "$CONTENT_ROOT" &
 PROXY_PID=$!
 
 wait_for_http "http://127.0.0.1:$ORIGIN_PORT/"
@@ -69,7 +82,7 @@ echo "Running full suite (takes a few minutes)"
 (cd "$SUITE_DIR" && npm run --silent cli "--base=http://127.0.0.1:$PROXY_PORT") > "$RESULTS"
 
 # 5. Gate against (or update) the baseline
-if [ "${1:-}" = "--update" ]; then
+if [ "$UPDATE" = true ]; then
   node "$CONFORMANCE_DIR/compare-results.mjs" "$RESULTS" --update "$BASELINE"
 else
   node "$CONFORMANCE_DIR/compare-results.mjs" "$RESULTS" "$BASELINE"

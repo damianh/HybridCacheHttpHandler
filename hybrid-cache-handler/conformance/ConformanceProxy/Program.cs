@@ -8,6 +8,7 @@
 using System.Diagnostics;
 using System.Net;
 using DamianH.HttpHybridCacheHandler;
+using DamianH.HttpHybridCacheHandler.ContentStore.FileSystem;
 using Microsoft.Extensions.Caching.Hybrid;
 using Yarp.ReverseProxy.Forwarder;
 
@@ -21,6 +22,18 @@ builder.Logging.SetMinimumLevel(LogLevel.Warning);
 
 builder.Services.AddHybridCache();
 builder.Services.AddHttpForwarder();
+var useFileSystem = bool.TryParse(builder.Configuration["file-system"], out var enabled) && enabled;
+if (useFileSystem)
+{
+    var root = builder.Configuration["content-root"]
+        ?? throw new InvalidOperationException("--content-root is required in filesystem mode.");
+    builder.Services.AddHttpHybridCacheFileSystemContentStore(store =>
+    {
+        store.RootDirectory = root;
+        store.MaximumAge = TimeSpan.FromDays(1);
+        store.MaximumTotalBytes = 1024L * 1024 * 1024;
+    });
+}
 
 var app = builder.Build();
 
@@ -30,6 +43,7 @@ var options = new HttpHybridCacheHandlerOptions
 {
     Mode = CacheMode.Shared,
     MaxCacheableContentSize = 50 * 1024 * 1024,
+    LargeContentThreshold = useFileSystem ? 1 : 1024 * 1024,
     VaryHeaders = []
 };
 
@@ -46,8 +60,10 @@ var cachingHandler = new HttpHybridCacheHandler(
     socketsHandler,
     app.Services.GetRequiredService<HybridCache>(),
     TimeProvider.System,
+    contentStore: null,
     options,
-    app.Services.GetRequiredService<ILogger<HttpHybridCacheHandler>>());
+    app.Services.GetRequiredService<ILogger<HttpHybridCacheHandler>>(),
+    app.Services.GetService<ILargeHttpCacheContentStore>());
 
 var invoker = new HttpMessageInvoker(cachingHandler, disposeHandler: false);
 var forwarder = app.Services.GetRequiredService<IHttpForwarder>();

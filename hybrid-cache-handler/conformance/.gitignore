@@ -1,3 +1,4 @@
 .cache-tests/
+.content-store-*/
 results*.json
 cli-stderr.txt

@@ -57,9 +57,10 @@ RFC 9111 compliant client-side HTTP caching for `HttpClient`, powered by .NET's 
   - `stale-while-revalidate`: Serve stale content while updating in background
   - `stale-if-error`: Serve stale content when origin is unavailable
 - **Configurable Limits**: Per-item content size limits (default 10MB)
+- **Optional Large Content Store**: Route large cached response bodies to Azure Blob Storage, Amazon S3, Google Cloud Storage, or the filesystem using separately versioned adapters
 - **Metrics**: Built-in metrics via `System.Diagnostics.Metrics` for hit/miss rates and cache operations
 - **Custom Cache Keys**: Extensible cache key generation for advanced scenarios
-- **Request Collapsing**: Prevents cache stampede via `HybridCache.GetOrCreateAsync` automatic request coalescing
+- **Request Collapsing**: The default buffered path coalesces requests through HybridCache. Opt-in streaming fills use independent origin streams until an entry is published
 
 ## Installation
 
@@ -290,10 +291,95 @@ new HttpHybridCacheHandlerOptions
 - **MaxCacheableContentSize**: Maximum size in bytes for cacheable response content (default: 10 MB). Responses larger than this will not be cached
 - **FallbackCacheDuration**: Fallback cache duration for responses without explicit caching headers (default: `TimeSpan.MinValue`, meaning responses without caching headers are not cached)
 - **CompressionThreshold**: Minimum content size in bytes to enable compression (default: 1024 bytes). Set to 0 or negative value to disable compression
+- **LargeContentThreshold**: Size threshold in bytes for routing cached content to an optional `ILargeHttpCacheContentStore` (default: 1 MiB). Set to 0 or negative value to always use HybridCache content storage
 - **CompressibleContentTypes**: Content types eligible for compression (default: `text/*`, `application/json`, `application/json+*`, `application/xml`, `application/javascript`, `image/svg+xml`)
 - **CacheableContentTypes**: Content types eligible for caching (default: `text/*`, `application/json`, `application/json+*`, `application/xml`, `application/javascript`, `application/xhtml+xml`, `image/*`)
 - **ContentKeyPrefix**: Prefix for content cache keys (default: `"httpcache:content:"`). Content is stored separately from metadata to avoid Base64 encoding overhead
 - **IncludeDiagnosticHeaders**: Whether to include diagnostic headers (`X-Cache-Diagnostic`, etc.) in responses (default: `false`)
+
+### Optional content stores
+
+Metadata and HTTP freshness remain in HybridCache. Choose one separately packaged body store:
+
+| Package | Backend | Configuration |
+| --- | --- | --- |
+| `DamianH.HttpHybridCacheHandler.Abstractions` | Provider-independent streaming contracts, no cloud SDK dependency | [Contract and ownership rules](src/HttpHybridCacheHandler.Abstractions/README.md) |
+| `DamianH.HttpHybridCacheHandler.ContentStore.AzureBlob` | Official `Azure.Storage.Blobs` SDK | [Azure setup](src/HttpHybridCacheHandler.ContentStore.AzureBlob/README.md) |
+| `DamianH.HttpHybridCacheHandler.ContentStore.S3` | Official `AWSSDK.S3` SDK | [S3 setup](src/HttpHybridCacheHandler.ContentStore.S3/README.md) |
+| `DamianH.HttpHybridCacheHandler.ContentStore.GoogleCloudStorage` | Official `Google.Cloud.Storage.V1` SDK | [Google Cloud setup](src/HttpHybridCacheHandler.ContentStore.GoogleCloudStorage/README.md) |
+| `DamianH.HttpHybridCacheHandler.ContentStore.FileSystem` | Native file streams, no cloud SDK | [Filesystem setup](src/HttpHybridCacheHandler.ContentStore.FileSystem/README.md) |
+
+Adapters depend on Abstractions, not on the handler or HybridCache. Configure credentials,
+endpoints, and retries through an injected SDK client. Registration never provisions cloud
+resources or modifies lifecycle policies. Stowage and FluentStorage are not dependencies.
+
+`LargeContentThreshold` uses the original response-body length, before internal storage
+compression. `MaxCacheableContentSize` still controls whether a body may be cached at all.
+Without an external store, the existing HybridCache-only path remains available.
+
+#### Streaming and retention
+
+With external storage enabled, cacheable origin bodies can stream to the caller while the
+handler stages a copy in bounded memory and temporary files. A completed body is uploaded
+before its metadata is published. Early disposal, an incomplete response, or cancellation
+does not populate the cache. Cache admission limits must not truncate the origin response.
+
+Use `HttpCompletionOption.ResponseHeadersRead` and consume/dispose the response stream
+to benefit from streaming. `HttpClient`'s default `ResponseContentRead`, `ReadAsStringAsync`,
+and `ReadAsByteArrayAsync` can still buffer the whole response in the caller.
+Cold streaming requests do not share a live response stream; simultaneous misses can
+make independent origin requests. Completing consumption can include cache upload latency.
+
+Temporary spool storage and persistent cache-body retention are separate concerns.
+Configure the handler's temporary staging independently of the selected body store:
+
+```csharp
+services.AddHttpHybridCacheHandler(options =>
+{
+    options.LargeContentThreshold = 1024 * 1024;
+    options.SpoolMemoryThreshold = 64 * 1024;
+    options.MaxSpoolDiskBytes = 1024L * 1024 * 1024;
+    options.MaxConcurrentDiskSpools = 32;
+    options.SpoolDirectory = Path.Combine(Path.GetTempPath(), "MyApp-cache-spool");
+});
+```
+
+The defaults are 64 KiB staging memory per spool, a 1 GiB aggregate active disk
+budget, 32 concurrent disk spools, and the system temporary directory. Compression
+may require a second spool, which counts toward the same disk limits. Reservations
+are process-wide; use consistent limits across handlers. Exhaustion abandons caching
+while origin delivery continues. These limits exclude caller buffers, fixed transfer
+buffers, provider SDK buffers, and persistent body storage.
+
+Use a trusted private staging parent. Each spill owns a unique leased directory;
+cleanup releases completed spools and can reclaim abandoned leased directories
+without deleting a live owner's files. HTTP cache metadata remains the caller's
+HybridCache configuration responsibility.
+
+Configure cloud lifecycle policies for cached objects and incomplete uploads, and configure
+age/size cleanup for filesystem storage. Retention is not HTTP freshness: a deleted body
+becomes a cache miss even if metadata is still fresh. Revalidation does not necessarily
+refresh an object's creation time. Do not delete shared content-addressed bodies merely
+because one URL or variant was invalidated.
+
+#### Versioning and migration
+
+The handler, Abstractions, and each adapter have independent versions and release tags.
+Release compatible Abstractions versions before consumers. SDK updates need not force
+a handler release.
+
+The content-store interfaces retain their namespace but now live in the Abstractions
+assembly. Implementations migrate from a materialized sequence write to a seekable,
+caller-owned input stream with an explicit stored length. The adapter must leave the
+input stream open and finish consuming it before returning. Returned read streams are
+owned by the response/caller. This is a breaking change from the initial pre-release
+Stowage implementation, not a binary-compatible replacement.
+
+Build targets are `pack-handler`, `pack-abstractions`, `pack-azureblob`, `pack-s3`,
+`pack-gcs`, and `pack-filesystem`; `pack-all` creates the local bundle. The release
+workflow selects one package and publishes only its exact artifact. Consumers declare
+the compatible Abstractions dependency floor through `HttpCacheAbstractionsPackageVersion`
+(initially `0.1.0`), rather than leaking another project's computed prerelease version.
 
 ## Metrics
 
@@ -378,7 +464,7 @@ The handler is designed for high-performance scenarios with several key optimiza
 **Eliminates Base64 overhead in distributed cache:**
 
 - **Metadata** (small, ~1-2KB): Status code, headers, timestamps, and variant metadata → Stored as JSON
-- **Content** (large, variable): Response body → **Stored as raw `byte[]`**
+- **Content** (large, variable): Stored separately as bytes in HybridCache, or as a streamed object in the configured external store
   - **No Base64 encoding** = 33% size savings
   - Content deduplication via SHA256 hash
   - Same content shared across cache variants (different `Vary` selections)
@@ -390,9 +476,10 @@ The handler is designed for high-performance scenarios with several key optimiza
 
 ### Memory Efficiency
 
-- **Stampede Prevention** (via `HybridCache.GetOrCreateAsync`): Multiple concurrent requests for the same resource are automatically collapsed into a single backend request
-- **Automatic Deduplication**: Only one request hits the backend while others await the cached result
-- Built-in HybridCache feature - no additional configuration needed
+- **Buffered fills** use HybridCache request coalescing.
+- **Streaming fills** give each caller an independent origin stream. Staging memory and temporary disk admission are bounded; completed bodies are uploaded before metadata becomes reusable.
+- **Content addressing** permits variants to share stored bodies. This does not imply that concurrent streaming misses share an origin request or upload.
+- The default HybridCache body store still materializes byte arrays. External storage avoids full-body allocations during cache fills and ordinary full-body replay; existing range-response construction can still buffer a cached representation. Caller buffering and fixed SDK buffers remain separate costs.
 
 ### Efficient Caching
 
@@ -402,22 +489,18 @@ The handler is designed for high-performance scenarios with several key optimiza
 
 ### Benchmark Results
 
-See `/benchmarks` for comprehensive memory allocation benchmarks:
-
-| Response Size | Allocations | Gen2 (LOH) | Notes |
-|---------------|-------------|------------|-------|
-| 1-10KB | ~10-20 KB | 0 | No LOH, optimal |
-| 10-85KB | ~20-100 KB | 0 | No LOH, good |
-| >85KB | ~100KB+ | >0 | LOH expected, acceptable for reliability |
-
-Run benchmarks: `cd benchmarks && .\run-memory-tests.ps1`
+See [benchmark guidance](benchmarks/Benchmarks/README.md) for the buffered-path benchmarks
+and `StreamingFillBenchmarks`. The latter generates 1, 32, and 128 MiB bodies without
+allocating them up front and drains via `ResponseHeadersRead`, with compression on/off.
+Its discard-only content store measures handler staging rather than cloud SDK or network costs.
+Reported allocation totals are not measurements of peak live memory or disk usage.
 
 ## Benchmarks
 
 Run benchmarks to measure performance:
 
 ```bash
-dotnet run --project benchmarks/Benchmarks.csproj -c Release
+dotnet run --project benchmarks/Benchmarks/Benchmarks.csproj -c Release
 ```
 
 ## RFC 9111 Conformance Suite

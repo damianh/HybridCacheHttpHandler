@@ -8,6 +8,29 @@ namespace DamianH.HttpHybridCacheHandler;
 /// </summary>
 public class HttpHybridCacheHandlerOptions
 {
+    /// <summary>Memory threshold per staging stream (default 64 KiB). Compression may use a second staging stream.</summary>
+    public int SpoolMemoryThreshold { get; set; } = 64 * 1024;
+
+    /// <summary>Per-process aggregate active disk spool budget (default 1 GiB). Exhaustion bypasses caching.</summary>
+    public long MaxSpoolDiskBytes { get; set; } = 1024L * 1024 * 1024;
+
+    /// <summary>Per-process maximum number of disk spools, including compression staging (default 32).</summary>
+    public int MaxConcurrentDiskSpools { get; set; } = 32;
+
+    /// <summary>Parent directory for private process-owned spool files. Defaults to the system temporary directory.</summary>
+    public string? SpoolDirectory { get; set; }
+
+    internal void ValidateSpooling()
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(SpoolMemoryThreshold);
+        ArgumentOutOfRangeException.ThrowIfNegative(MaxSpoolDiskBytes);
+        ArgumentOutOfRangeException.ThrowIfNegative(MaxConcurrentDiskSpools);
+        if (SpoolDirectory is { Length: 0 })
+        {
+            throw new ArgumentException("The spool directory must not be empty.", nameof(SpoolDirectory));
+        }
+    }
+
     /// <summary>
     /// Default minimum content size in bytes to enable compression. Set to 1 KB.
     /// </summary>
@@ -29,6 +52,12 @@ public class HttpHybridCacheHandlerOptions
     /// Default maximum size in bytes for cacheable response content. Set to 10 MB.
     /// </summary>
     public const long DefaultMaxCacheableContentSize = 10 * 1024 * 1024;
+
+    /// <summary>
+    /// Default response size threshold for routing content to an external large-content store.
+    /// Set to 1 MiB.
+    /// </summary>
+    public const long DefaultLargeContentThreshold = 1024 * 1024;
 
     /// <summary>
     /// Default list of cacheable content types. Values are
@@ -117,6 +146,13 @@ public class HttpHybridCacheHandlerOptions
     /// Set to 0 or negative value to disable compression.
     /// </summary>
     public long CompressionThreshold { get; set; } = DefaultCompressionThreshold;
+
+    /// <summary>
+    /// Response size threshold in bytes for routing cache content to an optional
+    /// <see cref="ILargeHttpCacheContentStore"/> implementation.
+    /// Set to 0 or a negative value to always use HybridCache content storage.
+    /// </summary>
+    public long LargeContentThreshold { get; set; } = DefaultLargeContentThreshold;
 
     /// <summary>
     /// Gets or sets the list of MIME types that are eligible for compression.

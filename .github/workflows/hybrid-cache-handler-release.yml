@@ -3,18 +3,61 @@ name: hybrid-cache-handler/release
 on:
   workflow_dispatch:
     inputs:
+      package:
+        description: 'Package to release (release abstractions before its consumers)'
+        required: true
+        type: choice
+        default: handler
+        options:
+          - handler
+          - abstractions
+          - azureblob
+          - s3
+          - gcs
+          - filesystem
       version:
         description: 'Version number (x.y.z or x.y.z-prerelease.1)'
         required: true
         type: string
 
 jobs:
+  select-package:
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      package-id: ${{ steps.select.outputs.package-id }}
+      tag-prefix: ${{ steps.select.outputs.tag-prefix }}
+      pack-target: ${{ steps.select.outputs.pack-target }}
+      artifact-directory: ${{ steps.select.outputs.artifact-directory }}
+    steps:
+      - name: Select independent package
+        id: select
+        env:
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          case "$PACKAGE" in
+            handler)      suffix=""; tag="cache-v" ;;
+            abstractions) suffix=".Abstractions"; tag="cache-abstractions-v" ;;
+            azureblob)    suffix=".ContentStore.AzureBlob"; tag="cache-azureblob-v" ;;
+            s3)           suffix=".ContentStore.S3"; tag="cache-s3-v" ;;
+            gcs)          suffix=".ContentStore.GoogleCloudStorage"; tag="cache-gcs-v" ;;
+            filesystem)   suffix=".ContentStore.FileSystem"; tag="cache-filesystem-v" ;;
+            *) echo "Unknown package selection: $PACKAGE"; exit 1 ;;
+          esac
+          echo "package-id=DamianH.HttpHybridCacheHandler$suffix" >> "$GITHUB_OUTPUT"
+          echo "tag-prefix=$tag" >> "$GITHUB_OUTPUT"
+          echo "pack-target=pack-$PACKAGE" >> "$GITHUB_OUTPUT"
+          echo "artifact-directory=artifacts/$PACKAGE" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: select-package
     uses: ./.github/workflows/release-template.yml
     with:
       product: hybrid-cache-handler
-      package: DamianH.HttpHybridCacheHandler
-      tag-prefix: cache-v
+      package: ${{ needs.select-package.outputs.package-id }}
+      tag-prefix: ${{ needs.select-package.outputs.tag-prefix }}
+      pack-target: ${{ needs.select-package.outputs.pack-target }}
+      artifact-directory: ${{ needs.select-package.outputs.artifact-directory }}
       version: ${{ inputs.version }}
     secrets:
       NUGET_ORG_APIKEY: ${{ secrets.NUGET_ORG_APIKEY }}

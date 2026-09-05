@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>DamianH.HttpHybridCacheHandler.ContentStore.GoogleCloudStorage</AssemblyName>
+    <RootNamespace>DamianH.HttpHybridCacheHandler</RootNamespace>
+    <MinVerMinimumMajorMinor>0.1</MinVerMinimumMajorMinor>
+    <MinVerTagPrefix>cache-gcs-v</MinVerTagPrefix>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>DamianH.HttpHybridCacheHandler.ContentStore.GoogleCloudStorage</PackageId>
+    <Authors>Damian Hickey</Authors>
+    <Description>Streaming Google Cloud Storage content store for HTTP caching.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/damianh/http-libs</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <PackageReference Include="Google.Cloud.Storage.V1" Version="4.15.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.10" />
+    <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="all" />
+    <ProjectReference Include="..\HttpHybridCacheHandler.Abstractions\HttpHybridCacheHandler.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

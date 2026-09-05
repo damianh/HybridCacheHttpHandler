@@ -19,6 +19,7 @@ public class HttpHybridCacheHandlerFixture : IAsyncDisposable
         HttpMessageHandler? primaryHandler = null,
         Action<HttpHybridCacheHandlerOptions>? configureHandlerOptions = null,
         HybridCache? customCache = null,
+        ILargeHttpCacheContentStore? largeContentStore = null,
         Action<IServiceCollection>? configureServices = null)
     {
         primaryHandler ??= new SocketsHttpHandler
@@ -51,6 +52,11 @@ public class HttpHybridCacheHandlerFixture : IAsyncDisposable
                 serviceCollection.Remove(descriptor);
             }
             serviceCollection.AddKeyedSingleton(ServiceCollectionExtensions.HybridCacheKey, customCache);
+        }
+
+        if (largeContentStore != null)
+        {
+            serviceCollection.AddSingleton<ILargeHttpCacheContentStore>(largeContentStore);
         }
 
         _services = serviceCollection.BuildServiceProvider();

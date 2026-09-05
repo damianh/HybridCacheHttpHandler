@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Hybrid;
@@ -19,7 +20,7 @@ namespace DamianH.HttpHybridCacheHandler;
 /// <summary>
 /// An HTTP delegating handler that provides client-side caching based on RFC 9111.
 /// </summary>
-public class HttpHybridCacheHandler : DelegatingHandler
+public partial class HttpHybridCacheHandler : DelegatingHandler
 {
     /// <summary>
     /// Represents the key used to store or retrieve the cache hits counter in a data store or metrics system.
@@ -40,7 +41,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
     private const int MaxVariantsPerEntry = 8;
 
     private readonly HybridCache _cache;
-    private readonly ContentCache _contentCache;
+    private readonly IHttpCacheContentStore _contentStore;
+    private readonly ILargeHttpCacheContentStore? _largeContentStore;
     private readonly TimeProvider _timeProvider;
     private readonly HttpHybridCacheHandlerOptions _options;
     private readonly ILogger _logger;
@@ -83,18 +85,78 @@ public class HttpHybridCacheHandler : DelegatingHandler
     /// </summary>
     /// <param name="cache">The hybrid cache instance to use for caching.</param>
     /// <param name="timeProvider">The time provider for time-based operations. Uses system time if not specified.</param>
+    /// <param name="contentStore">The default cache content store (HybridCache-backed by default).</param>
+    /// <param name="serviceProvider">Service provider used to resolve optional large-content store.</param>
     /// <param name="options">Configuration options for the handler. Uses default options if not specified.</param>
     /// <param name="logger">The logger instance. Uses NullLogger if not specified.</param>
     public HttpHybridCacheHandler(
         [FromKeyedServices(ServiceCollectionExtensions.HybridCacheKey)] HybridCache cache,
+        TimeProvider timeProvider,
+        IHttpCacheContentStore contentStore,
+        IServiceProvider serviceProvider,
+        IOptions<HttpHybridCacheHandlerOptions> options,
+        ILogger<HttpHybridCacheHandler> logger)
+    {
+        _cache = cache;
+        _options = options.Value;
+        _options.ValidateSpooling();
+        _contentStore = contentStore;
+        _largeContentStore = serviceProvider.GetService<ILargeHttpCacheContentStore>();
+        _timeProvider = timeProvider;
+        _logger = logger;
+        _freshnessCalculator = new FreshnessCalculator(_timeProvider, _options);
+        _cacheKeyGenerator = new CacheKeyGenerator(_options);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="HttpHybridCacheHandler"/> class.
+    /// </summary>
+    /// <param name="cache">The hybrid cache instance to use for caching.</param>
+    /// <param name="timeProvider">The time provider for time-based operations. Uses system time if not specified.</param>
+    /// <param name="options">Configuration options for the handler. Uses default options if not specified.</param>
+    /// <param name="logger">The logger instance. Uses NullLogger if not specified.</param>
+    public HttpHybridCacheHandler(
+        HybridCache cache,
         TimeProvider timeProvider,
         IOptions<HttpHybridCacheHandlerOptions> options,
         ILogger<HttpHybridCacheHandler> logger)
     {
         _cache = cache;
         _options = options.Value;
-        _contentCache = new ContentCache(cache);
+        _options.ValidateSpooling();
+        _contentStore = new ContentCache(cache);
         _timeProvider = timeProvider;
+        _logger = logger;
+        _freshnessCalculator = new FreshnessCalculator(_timeProvider, _options);
+        _cacheKeyGenerator = new CacheKeyGenerator(_options);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="HttpHybridCacheHandler"/> class with a specific inner handler.
+    /// </summary>
+    /// <param name="innerHandler">The inner handler which is responsible for processing the HTTP response messages.</param>
+    /// <param name="cache">The hybrid cache instance to use for caching.</param>
+    /// <param name="timeProvider">The time provider for time-based operations. Uses system time if not specified.</param>
+    /// <param name="contentStore">The default cache content store, or null to use the HybridCache-backed store.</param>
+    /// <param name="options">Configuration options for the handler. Uses default options if not specified.</param>
+    /// <param name="logger">The logger instance. Uses NullLogger if not specified.</param>
+    /// <param name="largeContentStore">Optional large-response content store.</param>
+    public HttpHybridCacheHandler(
+        HttpMessageHandler innerHandler,
+        HybridCache cache,
+        TimeProvider timeProvider,
+        IHttpCacheContentStore? contentStore,
+        HttpHybridCacheHandlerOptions options,
+        ILogger<HttpHybridCacheHandler> logger,
+        ILargeHttpCacheContentStore? largeContentStore = null)
+        : base(innerHandler)
+    {
+        _cache = cache;
+        _contentStore = contentStore ?? new ContentCache(cache);
+        _largeContentStore = largeContentStore;
+        _timeProvider = timeProvider;
+        _options = options;
+        _options.ValidateSpooling();
         _logger = logger;
         _freshnessCalculator = new FreshnessCalculator(_timeProvider, _options);
         _cacheKeyGenerator = new CacheKeyGenerator(_options);
@@ -114,15 +176,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
         TimeProvider timeProvider,
         HttpHybridCacheHandlerOptions options,
         ILogger<HttpHybridCacheHandler> logger)
-        : base(innerHandler)
+        : this(innerHandler, cache, timeProvider, null, options, logger)
     {
-        _cache = cache;
-        _contentCache = new ContentCache(cache);
-        _timeProvider = timeProvider;
-        _options = options;
-        _logger = logger;
-        _freshnessCalculator = new FreshnessCalculator(_timeProvider, _options);
-        _cacheKeyGenerator = new CacheKeyGenerator(_options);
     }
 
     /// <inheritdoc/>
@@ -130,6 +185,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
         HttpRequestMessage request,
         Ct ct)
     {
+        var coordinator = GetPublicationCoordinator();
+        using var fillScope = coordinator.Capture(GetUriTag(request.RequestUri));
+        _fillContext.Value = fillScope;
         // Only cache GET and HEAD requests
         if (request.Method != HttpMethod.Get && request.Method != HttpMethod.Head)
         {
@@ -269,9 +327,30 @@ public class HttpHybridCacheHandler : DelegatingHandler
         }
 
         CachedHttpEntry? cachedEntry;
+        var readingStreamingOrigin = false;
         try
         {
-            cachedEntry = await _cache.GetOrCreateAsync(
+            if (StreamingEnabled)
+            {
+                cachedEntry = await GetCacheEntryAsync(cacheKey2, ct);
+                if (cachedEntry == null)
+                {
+                    readingStreamingOrigin = true;
+                    uncachedResponse = await base.SendAsync(request, ct);
+                    readingStreamingOrigin = false;
+                    uncachedRawHeaders = CaptureRawHeaders(uncachedResponse);
+                    if (IsResponseCacheable(uncachedResponse, request) && IsAuthorizedResponseCacheable(uncachedResponse, request))
+                    {
+                        readingStreamingOrigin = true;
+                        await PrepareStreamingFillAsync(uncachedResponse, uncachedRawHeaders, request, cacheKey2,
+                            (current, variant) => UpsertVariant(current, variant), ct);
+                        readingStreamingOrigin = false;
+                    }
+                }
+            }
+            else
+            {
+                cachedEntry = await _cache.GetOrCreateAsync(
                 cacheKey2,
                 async cancel =>
                 {
@@ -333,8 +412,9 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 tags: requestUriTag == null ? null : [requestUriTag],
                 cancellationToken: ct
             );
+            }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!StreamingEnabled || (!readingStreamingOrigin && IsExpectedCacheFailure(ex)))
         {
             // Cache read/write failure - fall back to origin
             _logger.CacheOperationFailed(request.RequestUri, ex);
@@ -467,7 +547,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     {
                         try
                         {
-                            await _cache.RemoveAsync(cacheKey2, ct);
+                            await RemoveStreamingAwareAsync(cacheKey2, requestUriTag, ct);
                         }
                         catch (Exception ex)
                         {
@@ -565,7 +645,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                         AddDiagnosticHeaders(notModifiedResponse, DiagnosticHeaders.HitNotModified, cachedResponse);
 
                         // Trigger background revalidation
-                        _ = Task.Run(() => BackgroundRevalidateAsync(cachedEntry, cachedResponse, request, cacheKey2));
+                        StartBackgroundRevalidation(cachedEntry, cachedResponse, request, cacheKey2);
 
                         CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request)); // Count as hit (stale-while-revalidate)
                         CacheMetrics.CacheStale.Add(1, CacheMetrics.CreateMetricTags(request));
@@ -587,7 +667,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     AddDiagnosticHeaders(staleResponse, DiagnosticHeaders.HitStaleWhileRevalidate, cachedResponse);
 
                     // Trigger background revalidation
-                    _ = Task.Run(() => BackgroundRevalidateAsync(cachedEntry, cachedResponse, request, cacheKey2));
+                    StartBackgroundRevalidation(cachedEntry, cachedResponse, request, cacheKey2);
 
                     CacheMetrics.CacheHits.Add(1, CacheMetrics.CreateMetricTags(request)); // Count as hit (stale-while-revalidate)
                     CacheMetrics.CacheStale.Add(1, CacheMetrics.CreateMetricTags(request));
@@ -730,6 +810,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
         Ct ct,
         bool mergeWithLatest = true)
     {
+        if (StreamingEnabled)
+        {
+            await PrepareStreamingFillAsync(response, rawHeaders, serializationRequest, cacheKey, updateEntry, ct);
+            return;
+        }
         var variant = await SerializeResponse(response, rawHeaders, serializationRequest);
         if (variant == null)
         {
@@ -869,6 +954,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
             StatusCode = cached.StatusCode,
             ContentKey = cached.ContentKey,
             ContentLength = cached.ContentLength,
+            OriginalContentLength = cached.OriginalContentLength,
             Headers = mergedHeaders,
             ContentHeaders = mergedContentHeaders,
             CachedAt = _timeProvider.GetUtcNow(),
@@ -892,7 +978,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             IsPartial = cached.IsPartial,
             RangeStart = cached.RangeStart,
             RangeEnd = cached.RangeEnd,
-            RangeTotalLength = cached.RangeTotalLength
+            RangeTotalLength = cached.RangeTotalLength,
+            IsStoredExternally = cached.IsStoredExternally
         };
     }
 
@@ -900,16 +987,19 @@ public class HttpHybridCacheHandler : DelegatingHandler
         CachedHttpEntry cachedEntry,
         CachedHttpMetadata cachedResponse,
         HttpRequestMessage originalRequest,
-        string cacheKey)
+        string cacheKey,
+        Ct cancellationToken)
     {
         var requestUriTag = GetUriTag(originalRequest.RequestUri);
         var requestUriForLogging = originalRequest.RequestUri;
         try
         {
+            using var fillScope = GetPublicationCoordinator().Capture(requestUriTag);
+            _fillContext.Value = fillScope;
             using var revalidationRequest = CreateValidationRequest(originalRequest, cachedResponse, out var backgroundValidationUsesStoredValidator);
             requestUriForLogging = revalidationRequest.RequestUri;
-            using var revalidatedResponse = await base.SendAsync(revalidationRequest, Ct.None);
-            var currentEntry = await GetCacheEntryAsync(cacheKey, Ct.None) ?? cachedEntry;
+            using var revalidatedResponse = await base.SendAsync(revalidationRequest, cancellationToken);
+            var currentEntry = await GetCacheEntryAsync(cacheKey, cancellationToken) ?? cachedEntry;
 
             // Snapshot raw headers before typed access normalizes them
             var revalidatedRawHeaders = CaptureRawHeaders(revalidatedResponse);
@@ -922,10 +1012,10 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 }
 
                 var updatedVariant = UpdateCachedEntry(cachedResponse, revalidatedResponse);
-                var updatedEntry = ReplaceVariant(currentEntry, cachedResponse, updatedVariant);
                 try
                 {
-                    await _cache.SetAsync(cacheKey, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: Ct.None);
+                    await SetMergedEntryAsync(cacheKey, requestUriTag, currentEntry,
+                        current => ReplaceVariant(current, cachedResponse, updatedVariant), cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -938,13 +1028,20 @@ public class HttpHybridCacheHandler : DelegatingHandler
                 var revalidatedDirectives = GetEffectiveCacheDirectives(revalidatedResponse);
                 if (IsResponseCacheable(revalidatedResponse, revalidationRequest, revalidatedDirectives))
                 {
+                    if (StreamingEnabled)
+                    {
+                        await PrepareStreamingFillAsync(revalidatedResponse, revalidatedRawHeaders, revalidationRequest, cacheKey,
+                            (current, variant) => UpsertVariant(current, variant), cancellationToken);
+                        await revalidatedResponse.Content.CopyToAsync(Stream.Null, cancellationToken);
+                        return;
+                    }
                     var freshResponse = await SerializeResponse(revalidatedResponse, revalidatedRawHeaders, revalidationRequest);
                     if (freshResponse != null)
                     {
                         var updatedEntry = UpsertVariant(currentEntry, freshResponse);
                         try
                         {
-                            await _cache.SetAsync(cacheKey, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: Ct.None);
+                            await _cache.SetAsync(cacheKey, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: cancellationToken);
                         }
                         catch (Exception ex)
                         {
@@ -959,15 +1056,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
                     {
                         try
                         {
-                            var updatedEntry = RemoveVariant(currentEntry, cachedResponse);
-                            if (updatedEntry.Variants.Count == 0)
-                            {
-                                await _cache.RemoveAsync(cacheKey, Ct.None);
-                            }
-                            else
-                            {
-                                await _cache.SetAsync(cacheKey, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: Ct.None);
-                            }
+                            await SetMergedEntryAsync(cacheKey, requestUriTag, currentEntry,
+                                current => RemoveVariant(current, cachedResponse), cancellationToken);
                         }
                         catch (Exception ex)
                         {
@@ -1046,8 +1136,8 @@ public class HttpHybridCacheHandler : DelegatingHandler
             var updated = UpdateCachedEntry(cachedGet, headResponse);
             try
             {
-                var updatedEntry = ReplaceVariant(cachedGetEntry!, cachedGet, updated);
-                await _cache.SetAsync(getCacheKey, updatedEntry, CreateCacheEntryOptions(updatedEntry), tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: ct);
+                await SetMergedEntryAsync(getCacheKey, requestUriTag, cachedGetEntry!,
+                    current => ReplaceVariant(current, cachedGet, updated), ct);
             }
             catch (Exception ex)
             {
@@ -1067,7 +1157,7 @@ public class HttpHybridCacheHandler : DelegatingHandler
         {
             try
             {
-                await _cache.RemoveAsync(getCacheKey, ct);
+                await RemoveStreamingAwareAsync(getCacheKey, requestUriTag, ct);
             }
             catch (Exception ex)
             {
@@ -1115,9 +1205,11 @@ public class HttpHybridCacheHandler : DelegatingHandler
             UpsertHeaders(merged.Content.Headers, CaptureHeaders(originHeadResponse.Content.Headers));
         }
 
-        if (!merged.Content.Headers.ContentLength.HasValue && updatedCachedResponse.ContentLength > 0)
+        var originalLength = updatedCachedResponse.OriginalContentLength ??
+            (updatedCachedResponse.IsCompressed ? (long?)null : updatedCachedResponse.ContentLength);
+        if (!merged.Content.Headers.ContentLength.HasValue && originalLength.HasValue)
         {
-            merged.Content.Headers.ContentLength = updatedCachedResponse.ContentLength;
+            merged.Content.Headers.ContentLength = originalLength.Value;
         }
 
         return merged;
@@ -1707,7 +1799,18 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
             try
             {
-                await _cache.RemoveByTagAsync(uriTag, cancellationToken: ct);
+                using var invalidationScope = GetPublicationCoordinator().Capture(uriTag);
+                var stripe = invalidationScope.Stripe;
+                await stripe.Gate.WaitAsync(ct);
+                try
+                {
+                    Interlocked.Increment(ref stripe.Epoch);
+                    await _cache.RemoveByTagAsync(uriTag, cancellationToken: ct);
+                }
+                finally
+                {
+                    stripe.Gate.Release();
+                }
             }
             catch (Exception ex)
             {
@@ -2299,6 +2402,45 @@ public class HttpHybridCacheHandler : DelegatingHandler
         Func<CachedHttpEntry, CachedHttpEntry> update,
         Ct cancellationToken)
     {
+        if (StreamingEnabled)
+        {
+            using var context = _fillContext.Value?.Retain() ?? GetPublicationCoordinator().Capture(requestUriTag);
+            await context.Stripe.Gate.WaitAsync(cancellationToken);
+            try
+            {
+                if (context.Epoch != context.Stripe.Epoch)
+                {
+                    return;
+                }
+                var current = await GetCacheEntryAsync(cacheKey, cancellationToken) ?? new CachedHttpEntry();
+                var entry = update(current);
+                if (ReplacesNewerPublication(current, entry, context))
+                {
+                    return;
+                }
+                entry = new CachedHttpEntry
+                {
+                    Variants = entry.Variants.Select(variant =>
+                        current.Variants.Any(previous => ReferenceEquals(previous, variant))
+                            ? variant
+                            : variant with { PublicationSession = context.Session, PublicationSequence = context.Sequence }).ToList()
+                };
+                if (entry.Variants.Count == 0)
+                {
+                    await _cache.RemoveAsync(cacheKey, cancellationToken);
+                }
+                else
+                {
+                    await _cache.SetAsync(cacheKey, entry, CreateCacheEntryOptions(entry),
+                        tags: requestUriTag == null ? null : [requestUriTag], cancellationToken: cancellationToken);
+                }
+            }
+            finally
+            {
+                context.Stripe.Gate.Release();
+            }
+            return;
+        }
         var latestEntry = await GetCacheEntryAsync(cacheKey, cancellationToken) ?? fallbackEntry;
         var updatedEntry = update(latestEntry);
         if (updatedEntry.Variants.Count == 0)
@@ -2635,6 +2777,28 @@ public class HttpHybridCacheHandler : DelegatingHandler
             isCompressed = true;
         }
 
+        var requestUriTag = GetUriTag(request?.RequestUri);
+        IEnumerable<string>? contentTags = requestUriTag == null ? null : [requestUriTag];
+        var contentKey = CreateContentKey(contentToCache);
+        var contentStore = ResolveContentStore(originalContent.Length);
+        using var storedStream = new MemoryStream(contentToCache, writable: false);
+        await contentStore.WriteAsync(contentKey, storedStream, contentToCache.LongLength, contentTags, Ct.None);
+
+        response.Content = new ByteArrayContent(originalContent);
+        foreach (var header in originalContentHeaders)
+        {
+            response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        return CreateMetadata(response, rawHeaders, request, contentKey, contentToCache.LongLength, originalContent.LongLength, isCompressed,
+            ReferenceEquals(contentStore, _largeContentStore));
+    }
+
+    private CachedHttpMetadata CreateMetadata(HttpResponseMessage response, RawHeaderSnapshot rawHeaders,
+        HttpRequestMessage? request, string contentKey, long storedLength, long originalLength, bool isCompressed, bool storedExternally)
+    {
+        var directives = GetEffectiveCacheDirectives(response);
+        var originalContentHeaders = rawHeaders.ContentHeaders;
         var headers = new Dictionary<string, string[]>(rawHeaders.Headers, StringComparer.OrdinalIgnoreCase);
         var contentHeaders = new Dictionary<string, string[]>(originalContentHeaders, StringComparer.OrdinalIgnoreCase);
 
@@ -2719,26 +2883,14 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         (staleWhileRevalidate, staleIfError) = ParseStaleDirectives(response.Headers);
 
-        // Store content separately (always, to avoid Base64 encoding)
-        // Store content first (write order: content before metadata for atomicity)
-        var requestUriTag = GetUriTag(request?.RequestUri);
-        IEnumerable<string>? contentTags = requestUriTag == null ? null : [requestUriTag];
-        var contentKey = await _contentCache.StoreContentAsync(contentToCache, null, contentTags, Ct.None);
-
-        // Restore response content so caller can use it (content was consumed during read)
-        response.Content = new ByteArrayContent(originalContent);
-        foreach (var header in originalContentHeaders)
-        {
-            response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
-        }
-
         var partialMetadata = TryGetPartialMetadata(response);
 
         return new CachedHttpMetadata
         {
             StatusCode = (int)response.StatusCode,
             ContentKey = contentKey,
-            ContentLength = contentToCache.Length,
+            ContentLength = storedLength,
+            OriginalContentLength = originalLength,
             Headers = headers,
             ContentHeaders = contentHeaders,
             CachedAt = _timeProvider.GetUtcNow(),
@@ -2762,32 +2914,38 @@ public class HttpHybridCacheHandler : DelegatingHandler
             IsPartial = partialMetadata?.IsPartial ?? false,
             RangeStart = partialMetadata?.Start,
             RangeEnd = partialMetadata?.End,
-            RangeTotalLength = partialMetadata?.TotalLength
+            RangeTotalLength = partialMetadata?.TotalLength,
+            IsStoredExternally = storedExternally
         };
     }
 
     private async Task<HttpResponseMessage?> DeserializeResponseAsync(CachedHttpMetadata metadata, Ct cancellationToken)
     {
+        if (metadata.IsStoredExternally && _largeContentStore == null)
+        {
+            return null;
+        }
+        var contentStore = metadata.IsStoredExternally && _largeContentStore != null
+            ? _largeContentStore
+            : _contentStore;
+
         // Get content from separate storage
-        var retrievedContent = await _contentCache.GetContentAsync(metadata.ContentKey, cancellationToken);
-        if (retrievedContent == null)
+        var contentStream = await contentStore.OpenReadAsync(metadata.ContentKey, cancellationToken);
+        if (contentStream == null)
         {
             // Content missing - metadata is orphaned
             _logger.CachedContentMissing(metadata.ContentKey);
             return null;
         }
 
-        var content = retrievedContent;
-
-        // Decompress if needed
         if (metadata.IsCompressed)
         {
-            content = DecompressContent(content);
+            contentStream = new GZipStream(contentStream, CompressionMode.Decompress);
         }
 
         var response = new HttpResponseMessage((HttpStatusCode)metadata.StatusCode)
         {
-            Content = new ReadOnlyMemoryContent(content)
+            Content = new StreamContent(contentStream)
         };
 
         var forbiddenHeaderNames = BuildReplayForbiddenHeaderSet(metadata.QualifiedNoCacheHeaderNames);
@@ -2818,6 +2976,16 @@ public class HttpHybridCacheHandler : DelegatingHandler
 
         return response;
     }
+
+    private IHttpCacheContentStore ResolveContentStore(long contentLength) =>
+        _largeContentStore != null
+        && _options.LargeContentThreshold > 0
+        && contentLength >= _options.LargeContentThreshold
+            ? _largeContentStore
+            : _contentStore;
+
+    private string CreateContentKey(byte[] content) =>
+        $"{_options.ContentKeyPrefix}{Convert.ToHexString(SHA256.HashData(content))}";
 
     private bool IsCompressible(string? mediaType)
     {

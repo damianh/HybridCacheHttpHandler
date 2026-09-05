@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: '["ubuntu-latest"]'
+      pack-target:
+        description: 'Optional build.cs pack target, which also builds the product.'
+        required: false
+        type: string
+        default: ''
 
 env:
   DOTNET_NOLOGO: true
@@ -37,7 +42,14 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Build
-        run: dotnet run ${{ inputs.product }}/build.cs -- build
+        run: dotnet run ${{ inputs.product }}/build.cs -- ${{ inputs.pack-target || 'build' }}
+      - name: Upload packages
+        if: inputs.pack-target != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ inputs.product }}
+          path: ${{ inputs.product }}/artifacts/**/*.nupkg
+          if-no-files-found: error
 
   test:
     name: "Test: ${{ matrix.target }} (${{ matrix.os }})"
