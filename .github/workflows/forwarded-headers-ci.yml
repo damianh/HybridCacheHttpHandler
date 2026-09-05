@@ -1,0 +1,34 @@
+name: forwarded-headers/ci
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - '**'
+    paths:
+      - .github/BuildHelpers/**
+      - .github/workflows/forwarded-headers-ci.yml
+      - .github/workflows/ci-template.yml
+      - forwarded-headers/**
+      - .editorconfig
+      - Directory.Build.props
+      - global.json
+      - http-lib.slnx
+  pull_request:
+    paths:
+      - .github/BuildHelpers/**
+      - .github/workflows/forwarded-headers-ci.yml
+      - .github/workflows/ci-template.yml
+      - forwarded-headers/**
+      - .editorconfig
+      - Directory.Build.props
+      - global.json
+      - http-lib.slnx
+
+jobs:
+  build:
+    uses: ./.github/workflows/ci-template.yml
+    with:
+      product: forwarded-headers
+      test-targets: '["test"]'

@@ -1,0 +1,10 @@
+{
+  "solution": {
+    "path": "..\\http-lib.slnx",
+    "projects": [
+      "forwarded-headers\\src\\Http.ForwardedHeaders\\Http.ForwardedHeaders.csproj",
+      "forwarded-headers\\test\\Http.ForwardedHeaders.Tests\\Http.ForwardedHeaders.Tests.csproj",
+      "forwarded-headers\\samples\\AspNetCoreSample\\AspNetCoreSample.csproj"
+    ]
+  }
+}

@@ -1,4 +1,15 @@
 <Solution>
+  <Folder Name="/forwarded-headers/">
+  </Folder>
+  <Folder Name="/forwarded-headers/src/">
+    <Project Path="forwarded-headers/src/Http.ForwardedHeaders/Http.ForwardedHeaders.csproj" />
+  </Folder>
+  <Folder Name="/forwarded-headers/test/">
+    <Project Path="forwarded-headers/test/Http.ForwardedHeaders.Tests/Http.ForwardedHeaders.Tests.csproj" />
+  </Folder>
+  <Folder Name="/forwarded-headers/samples/">
+    <Project Path="forwarded-headers/samples/AspNetCoreSample/AspNetCoreSample.csproj" />
+  </Folder>
   <Folder Name="/structured-field-values/">
   </Folder>
   <Folder Name="/structured-field-values/src/">
