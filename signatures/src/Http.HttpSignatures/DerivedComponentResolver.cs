@@ -1,7 +1,7 @@
 // Copyright (c) Damian Hickey. All rights reserved.
 // See LICENSE in the project root for license information.
 
-using System.Web;
+using System.Globalization;
 
 namespace DamianH.Http.HttpSignatures;
 
@@ -21,6 +21,8 @@ internal static class DerivedComponentResolver
     /// <exception cref="SignatureBaseException">Thrown when the component cannot be resolved.</exception>
     internal static string Resolve(ComponentIdentifier identifier, IHttpMessageContext context)
     {
+        ComponentValidator.Validate(identifier, context);
+
         // If req is set, resolve from the associated request context
         var resolveContext = identifier.Req
             ? context.AssociatedRequest ?? throw new SignatureBaseException(
@@ -48,7 +50,8 @@ internal static class DerivedComponentResolver
         if (!context.IsRequest)
             throw new SignatureBaseException(identifier, "@method is only valid for request messages.");
 
-        return context.Method?.ToUpperInvariant()
+        // RFC 9421 §2.2.1: the method is taken verbatim, without any case normalization.
+        return context.Method
             ?? throw new SignatureBaseException(identifier, "HTTP method is not available.");
     }
 
@@ -124,8 +127,8 @@ internal static class DerivedComponentResolver
         if (!context.IsRequest)
             throw new SignatureBaseException(identifier, "@query-param is only valid for request messages.");
 
-        var paramName = identifier.QueryParamName
-            ?? throw new SignatureBaseException(identifier, "@query-param requires a 'name' parameter.");
+        // ComponentValidator guarantees 'name' is present for '@query-param'.
+        var paramName = identifier.QueryParamName!;
 
         var query = context.Query;
         if (query is null || query == "?")
@@ -134,43 +137,76 @@ internal static class DerivedComponentResolver
         // Remove leading '?'
         var queryString = query.StartsWith('?') ? query[1..] : query;
 
-        // RFC 9421 §2.2.8: parse query parameters, percent-decode names to match
-        var pairs = queryString.Split('&');
-        var found = false;
-        string? value = null;
+        var pairs = queryString.Length == 0 ? [] : queryString.Split('&');
+        string? canonicalValue = null;
+        var matchCount = 0;
 
         foreach (var pair in pairs)
         {
             var eqIdx = pair.IndexOf('=');
-            string pairName;
-            string pairValue;
+            string rawPairName;
+            string rawPairValue;
 
             if (eqIdx >= 0)
             {
-                pairName = pair[..eqIdx];
-                pairValue = pair[(eqIdx + 1)..];
+                rawPairName = pair[..eqIdx];
+                rawPairValue = pair[(eqIdx + 1)..];
             }
             else
             {
-                pairName = pair;
-                pairValue = string.Empty;
+                rawPairName = pair;
+                rawPairValue = string.Empty;
             }
 
-            // Decode the name to compare
-            var decodedName = HttpUtility.UrlDecode(pairName);
-            if (decodedName == paramName)
+            // RFC 9421 §2.2.8 steps 1-2: parse (percent-decode, '+' as space) then re-encode via
+            // the "percent-encode after encoding" process, for both the name and the value. The
+            // 'name' parameter on the identifier is required to already be in this same canonical
+            // encoded form, so it is compared directly rather than being decoded itself.
+            string canonicalPairName;
+            try
             {
-                value = pairValue;
-                found = true;
-                break;
+                canonicalPairName = FormUrlEncoding.Encode(FormUrlEncoding.Decode(rawPairName));
+            }
+            catch (FormatException ex)
+            {
+                throw new SignatureBaseException(
+                    identifier,
+                    $"Query string parameter name could not be parsed as application/x-www-form-urlencoded: {ex.Message}",
+                    ex);
+            }
+
+            if (canonicalPairName != paramName)
+                continue;
+
+            matchCount++;
+
+            try
+            {
+                canonicalValue = FormUrlEncoding.Encode(FormUrlEncoding.Decode(rawPairValue));
+            }
+            catch (FormatException ex)
+            {
+                throw new SignatureBaseException(
+                    identifier,
+                    $"Query parameter '{paramName}' value could not be parsed as application/x-www-form-urlencoded: {ex.Message}",
+                    ex);
             }
         }
 
-        if (!found)
+        // RFC 9421 §2.2.8: a query parameter name that matches more than once cannot be
+        // unambiguously covered, so it MUST NOT be included rather than silently picking one.
+        if (matchCount > 1)
+        {
+            throw new SignatureBaseException(
+                identifier,
+                $"Query parameter '{paramName}' matches more than once in the query string and cannot be unambiguously covered.");
+        }
+
+        if (matchCount == 0)
             throw new SignatureBaseException(identifier, $"Query parameter '{paramName}' not found in query string.");
 
-        // RFC 9421 §2.2.8: value is the percent-encoded value as it appears in the query string
-        return value ?? string.Empty;
+        // RFC 9421 §2.2.8: named parameters with an empty valueString have an empty component value.
+        return canonicalValue ?? string.Empty;
     }
 
     private static string ResolveStatus(ComponentIdentifier identifier, IHttpMessageContext context)
@@ -181,6 +217,85 @@ internal static class DerivedComponentResolver
         var status = context.StatusCode
             ?? throw new SignatureBaseException(identifier, "HTTP status code is not available.");
 
-        return status.ToString();
+        return status.ToString(CultureInfo.InvariantCulture);
+    }
+}
+
+/// <summary>
+/// Implements the "application/x-www-form-urlencoded" decode/encode algorithms referenced by
+/// RFC 9421 §2.2.8 for <c>@query-param</c> name matching, as defined by the WHATWG URL Standard's
+/// form-urlencoded serializer/parser (not the same rules as general percent-encoding).
+/// </summary>
+internal static class FormUrlEncoding
+{
+    private const string UnreservedChars = "-._*";
+
+    /// <summary>
+    /// Decodes a raw query-string name or value using the form-urlencoded parser: '+' is
+    /// replaced with a space (before percent-decoding), then '%XX' escapes are percent-decoded,
+    /// and the resulting bytes are UTF-8 decoded. A raw (unescaped) non-ASCII character is
+    /// rejected rather than silently accepted, since a query string is expected to already be
+    /// percent-encoded. A stray '%' not followed by two hex digits is passed through literally,
+    /// matching the permissive WHATWG form-urlencoded parser.
+    /// </summary>
+    internal static string Decode(string encoded)
+    {
+        ArgumentNullException.ThrowIfNull(encoded);
+
+        var bytes = new List<byte>(encoded.Length);
+        for (var i = 0; i < encoded.Length; i++)
+        {
+            var c = encoded[i];
+            if (c == '+')
+            {
+                bytes.Add((byte)' ');
+            }
+            else if (c == '%' && i + 2 < encoded.Length && IsHexDigit(encoded[i + 1]) && IsHexDigit(encoded[i + 2]))
+            {
+                bytes.Add(Convert.ToByte(encoded.Substring(i + 1, 2), 16));
+                i += 2;
+            }
+            else if (c <= 0x7F)
+            {
+                bytes.Add((byte)c);
+            }
+            else
+            {
+                throw new FormatException(
+                    $"Query string contains raw character U+{(int)c:X4} that is not percent-encoded.");
+            }
+        }
+
+        return System.Text.Encoding.UTF8.GetString([.. bytes]);
+    }
+
+    private static bool IsHexDigit(char c) => c is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F';
+
+    /// <summary>
+    /// Encodes a decoded string using the form-urlencoded serializer: UTF-8 encode, then
+    /// percent-encode every byte except ASCII letters, digits, '-', '.', '_', and '*'
+    /// (notably, space is encoded as <c>%20</c>, not '+').
+    /// </summary>
+    internal static string Encode(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(value);
+        var sb = new System.Text.StringBuilder(bytes.Length);
+
+        foreach (var b in bytes)
+        {
+            var c = (char)b;
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || UnreservedChars.Contains(c))
+            {
+                sb.Append(c);
+            }
+            else
+            {
+                sb.Append('%').Append(b.ToString("X2", CultureInfo.InvariantCulture));
+            }
+        }
+
+        return sb.ToString();
     }
 }

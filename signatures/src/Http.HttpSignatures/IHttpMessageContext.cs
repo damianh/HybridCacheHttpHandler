@@ -37,18 +37,21 @@ public interface IHttpMessageContext
     int? StatusCode { get; }
 
     /// <summary>
-    /// Gets the combined, canonicalized value for the named header field.
-    /// Returns null if the field is not present.
-    /// Multiple values are combined per RFC 9110 §5.2 (comma + space).
-    /// </summary>
-    string? GetHeaderValue(string fieldName);
-
-    /// <summary>
-    /// Gets the individual raw values for the named header field.
-    /// Returns empty if the field is not present.
-    /// Used for <c>bs</c> (binary-wrapped) processing.
+    /// Gets the individual, uncombined raw values for the named header field, in field-line order.
+    /// Returns empty when the header is not present. This is the sole authoritative source of header
+    /// data: combination for ordinary field access and lossless octet wrapping for <c>bs</c> both
+    /// build on these raw values via <see cref="HttpMessageContextExtensions"/>; implementations are
+    /// not required to also provide an independently canonicalized combined-value API.
     /// </summary>
     IReadOnlyList<string> GetHeaderValues(string fieldName);
+
+    /// <summary>
+    /// Gets the individual, uncombined raw values for the named trailer field, in field-line order.
+    /// Returns empty when the trailer is not present or trailers are not available. A missing trailer
+    /// is never satisfied by falling back to a header of the same name, and the two sections are never
+    /// combined. Implementations that do not support trailers should always return an empty list.
+    /// </summary>
+    IReadOnlyList<string> GetTrailerValues(string fieldName);
 
     /// <summary>
     /// For response contexts, the associated request context (for <c>req</c> parameter).

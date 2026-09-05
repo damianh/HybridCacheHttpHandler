@@ -24,9 +24,4 @@ public abstract class SigningKey
     /// </summary>
     public string KeyId { get; }
 
-    /// <summary>
-    /// Gets the algorithm hint for this key, if known.
-    /// Used to validate that the key is compatible with the chosen algorithm.
-    /// </summary>
-    public abstract string? AlgorithmHint { get; }
 }

@@ -12,13 +12,17 @@ RFC 9421 HTTP Message Signatures for signing and verifying HTTP messages.
 - [API Reference](#api-reference)
   - [HttpMessageSigner](#httpmessagesigner)
   - [HttpMessageVerifier](#httpmessageverifier)
+  - [Credentials](#credentials)
+  - [Verification Policy](#verification-policy)
   - [SignatureParameters](#signatureparameters)
   - [ComponentIdentifier](#componentidentifier)
   - [IHttpMessageContext](#ihttpmessagecontext)
+  - [IStructuredFieldTypeResolver](#istructuredfieldtyperesolver)
   - [SignatureResult](#signatureresult)
   - [VerificationResult](#verificationresult)
 - [Key Types](#key-types)
-- [Runtime Resolution](#runtime-resolution)
+- [Runtime Credential Resolution](#runtime-credential-resolution)
+- [Security Boundaries](#security-boundaries)
 
 ## Installation
 
@@ -45,6 +49,7 @@ using DamianH.Http.HttpSignatures.Keys;
 
 var signingKey = new HmacSharedKey("my-key-id", Encoding.UTF8.GetBytes("super-secret"));
 var algorithm = new HmacSha256SignatureAlgorithm();
+var signingCredentials = new SigningCredentials(signingKey, algorithm);
 var signer = new HttpMessageSigner();
 
 var parameters = new SignatureParameters([
@@ -60,7 +65,7 @@ var parameters = new SignatureParameters([
 };
 
 // context adapts your HTTP message (see IHttpMessageContext)
-SignatureResult result = signer.Sign("sig1", context, parameters, signingKey, algorithm);
+SignatureResult result = signer.Sign("sig1", context, parameters, signingCredentials);
 
 // Add the headers to the outgoing request
 request.Headers.Add("Signature-Input", result.SignatureInputHeaderValue);
@@ -69,9 +74,10 @@ request.Headers.Add("Signature", result.SignatureHeaderValue);
 // --- Verification ---
 
 var verificationKey = signingKey.AsVerificationKey();
+var verificationCredentials = new VerificationCredentials(verificationKey, algorithm);
 var verifier = new HttpMessageVerifier();
 
-VerificationResult verification = verifier.Verify("sig1", context, verificationKey, algorithm);
+VerificationResult verification = verifier.Verify("sig1", context, verificationCredentials);
 
 if (!verification.IsValid)
 {
@@ -103,34 +109,91 @@ public sealed class HttpMessageSigner
         string label,
         IHttpMessageContext context,
         SignatureParameters parameters,
-        SigningKey key,
-        ISignatureAlgorithm algorithm);
+        SigningCredentials credentials,
+        IStructuredFieldTypeResolver? fieldTypeResolver = null);
 }
 ```
 
+`fieldTypeResolver` declares the Structured Field type of HTTP fields, and is required to resolve `sf` and `key` components (see [IStructuredFieldTypeResolver](#istructuredfieldtyperesolver)). When omitted, every field's type is treated as unknown, so `sf`/`key` components fail explicitly instead of guessing the type from the field's value.
+
 ### HttpMessageVerifier
 
-Verifies an HTTP message signature, either with explicit key/algorithm or via runtime resolution.
+Performs protocol and cryptographic verification. `IsValid` does not mean that
+application age, replay, tag, or required-component policy has accepted the message.
 
 ```csharp
 public sealed class HttpMessageVerifier
 {
-    // Explicit key and algorithm
     public VerificationResult Verify(
         string label,
         IHttpMessageContext context,
-        VerificationKey key,
-        ISignatureAlgorithm algorithm);
+        VerificationCredentials credentials,
+        IStructuredFieldTypeResolver? fieldTypeResolver = null);
 
-    // Runtime key and algorithm resolution
-    public Task<VerificationResult> VerifyAsync(
+    public ValueTask<VerificationResult> VerifyAsync(
         string label,
         IHttpMessageContext context,
-        IKeyResolver keyResolver,
-        ISignatureAlgorithmRegistry algorithmRegistry,
+        IVerificationCredentialsResolver credentialsResolver,
+        IStructuredFieldTypeResolver? fieldTypeResolver = null,
         CancellationToken cancellationToken = default);
 }
 ```
+
+Expected input failures return a `VerificationResult` with a machine-readable
+`FailureCode`. Cancellation and resolver, cryptographic-provider, or storage
+infrastructure failures propagate to the caller.
+
+### Credentials
+
+`SigningCredentials` and `VerificationCredentials` bind key material to exactly
+one trusted algorithm and validate compatibility when constructed. A signed
+`alg` parameter is optional; when present, it must match the trusted algorithm.
+A signed `keyid`, when present, must match the trusted credential identity.
+
+ECDSA credentials validate the actual P-256 or P-384 curve, and ECDSA
+verification enforces the RFC fixed signature size.
+
+### Verification Policy
+
+Use `VerifyAndValidateAsync` when successful cryptographic verification must
+also satisfy explicit application requirements:
+
+```csharp
+var policy = new VerificationPolicy
+{
+    RequiredComponents =
+    [
+        ComponentIdentifier.Method,
+        ComponentIdentifier.Authority,
+        ComponentIdentifier.Field("content-digest"),
+    ],
+    RequireCreated = true,
+    MaximumAge = TimeSpan.FromMinutes(5),
+    ValidateExpiration = true,
+    RequiredTag = "my-app",
+    TimeProvider = TimeProvider.System,
+};
+
+VerificationAcceptanceResult acceptance =
+    await verifier.VerifyAndValidateAsync(
+        "sig1", context, verificationCredentials, policy);
+
+if (!acceptance.IsAccepted)
+{
+    Console.WriteLine(acceptance.ErrorMessage);
+}
+```
+
+Replay protection is opt-in through `INonceStore`. Its `TryUseAsync` operation
+must atomically claim a nonce across every server sharing a replay scope. A
+separate cache read followed by a write is not sufficient. When a nonce store
+is configured, policy must enforce a finite acceptance window using
+`MaximumAge` or `RequireExpires`; `ValidateExpiration` alone is not
+sufficient, because it only validates an expires value when one is present
+and does not guarantee one was signed. The claim is retained through the
+resulting deadline, including clock skew. Storage adapters, including any
+HybridCache adapter, are application concerns and are not included in this
+package.
 
 ### SignatureParameters
 
@@ -152,7 +215,10 @@ var parameters = new SignatureParameters([
 };
 ```
 
-All properties except `CoveredComponents` are optional. Omitting `Created`/`Expires` means no time-bound validation.
+All properties except `CoveredComponents` are optional. Metadata is signed, but
+`Verify` does not impose application policy merely because metadata is present.
+Configure a `VerificationPolicy` to enforce creation age, expiration, nonce,
+tag, or required-component rules.
 
 ### ComponentIdentifier
 
@@ -197,11 +263,28 @@ public interface IHttpMessageContext
     string? TargetUri { get; }
     string? RequestTarget { get; }
     int? StatusCode { get; }
-    string? GetHeaderValue(string fieldName);
     IReadOnlyList<string> GetHeaderValues(string fieldName);
+    IReadOnlyList<string> GetTrailerValues(string fieldName);
     IHttpMessageContext? AssociatedRequest { get; }
 }
 ```
+
+Implementations provide only the raw, uncombined field values, in field-line order, for headers (`GetHeaderValues`) and trailers (`GetTrailerValues`); a missing trailer must never fall back to a header of the same name, and the two sections are never combined together (RFC 9421 §2.1.4). The `HttpMessageContextExtensions.GetHeaderValue`/`GetTrailerValue` extension methods build the ordinary combined, canonicalized value (trimming, obsolete line-fold unwrapping, and comma-space combination per RFC 9110 §5.2) on top of these raw values, so most callers never need to implement combination themselves.
+
+### IStructuredFieldTypeResolver
+
+Declares the Structured Field Values (RFC 8941/9651) type of an HTTP field, required to resolve `sf` and `key` components deterministically instead of guessing the type by trying each parser in turn.
+
+```csharp
+public enum StructuredFieldValueKind { Unknown, Item, List, Dictionary }
+
+public interface IStructuredFieldTypeResolver
+{
+    StructuredFieldValueKind ResolveType(bool isRequest, string fieldName);
+}
+```
+
+A ready-to-use `DictionaryStructuredFieldTypeResolver` is provided, backed by a case-insensitive `IReadOnlyDictionary<string, StructuredFieldValueKind>` map of field name to declared type. Pass an instance to `HttpMessageSigner.Sign` / `SignatureBaseBuilder.Build` / `SignatureBaseBuilder.BuildString` via the optional `fieldTypeResolver` parameter.
 
 ### SignatureResult
 
@@ -212,7 +295,7 @@ Returned by `HttpMessageSigner.Sign`. Contains the values to set on the outgoing
 | `Label` | `string` | The signature label (e.g., `"sig1"`) |
 | `SignatureInputHeaderValue` | `string` | The value to add to the `Signature-Input` header |
 | `SignatureHeaderValue` | `string` | The value to add to the `Signature` header |
-| `SignatureBytes` | `byte[]` | The raw signature bytes |
+| `SignatureBytes` | `ReadOnlySpan<byte>` | The raw signature bytes (defensively copied on construction; call `.ToArray()` for an owned copy) |
 
 ### VerificationResult
 
@@ -231,8 +314,8 @@ Returned by `HttpMessageVerifier.Verify` / `VerifyAsync`.
 | Class | Constructor | Algorithm |
 |-------|-------------|-----------|
 | `HmacSharedKey` | `(string keyId, byte[] keyBytes)` | `hmac-sha256` |
-| `EcdsaSigningKey` | `(string keyId, ECDsa ecdsa, string? algorithmHint = null)` | `ecdsa-p256-sha256`, `ecdsa-p384-sha384` |
-| `RsaSigningKey` | `(string keyId, RSA rsa, string? algorithmHint = null)` | `rsa-pss-sha512`, `rsa-v1_5-sha256` |
+| `EcdsaSigningKey` | `(string keyId, ECDsa ecdsa)` | `ecdsa-p256-sha256`, `ecdsa-p384-sha384` |
+| `RsaSigningKey` | `(string keyId, RSA rsa)` | `rsa-pss-sha512`, `rsa-v1_5-sha256` |
 | `Ed25519SigningKey` | `(string keyId, byte[] privateKeyBytes)` | `ed25519` ⚠️ stub |
 
 ### Verification Keys
@@ -240,36 +323,49 @@ Returned by `HttpMessageVerifier.Verify` / `VerifyAsync`.
 | Class | Constructor | Notes |
 |-------|-------------|-------|
 | `HmacSharedVerificationKey` | `(string keyId, byte[] keyBytes)` | Obtain via `HmacSharedKey.AsVerificationKey()` |
-| `EcdsaVerificationKey` | `(string keyId, ECDsa ecdsa, string? algorithmHint = null)` | Public key sufficient |
-| `RsaVerificationKey` | `(string keyId, RSA rsa, string? algorithmHint = null)` | Public key sufficient |
+| `EcdsaVerificationKey` | `(string keyId, ECDsa ecdsa)` | Public key sufficient |
+| `RsaVerificationKey` | `(string keyId, RSA rsa)` | Public key sufficient |
 | `Ed25519VerificationKey` | `(string keyId, byte[] publicKeyBytes)` | `ed25519` ⚠️ stub |
 
-All key types carry a `KeyId` (used in the `keyid` signature parameter) and an optional `AlgorithmHint`.
+All key types carry a `KeyId`. Cryptographic objects remain caller-owned and
+are never disposed by this library.
 
-## Runtime Resolution
+## Runtime Credential Resolution
 
-For server-side verification where the key and algorithm are not known in advance, implement `IKeyResolver` and use `SignatureAlgorithmRegistry`:
+For server-side verification, resolve a trusted key and its one allowed
+algorithm together:
 
 ```csharp
-// Implement key resolution from your keystore
-public class MyKeyResolver : IKeyResolver
+public sealed class MyCredentialsResolver : IVerificationCredentialsResolver
 {
-    public Task<VerificationKey?> ResolveKeyAsync(string keyId, CancellationToken ct = default)
+    public async ValueTask<VerificationCredentials?> ResolveAsync(
+        string keyId,
+        CancellationToken cancellationToken = default)
     {
-        // look up key by keyId
-        var key = _store.Find(keyId);
-        return Task.FromResult<VerificationKey?>(key);
+        VerificationKey? key = await _store.FindAsync(keyId, cancellationToken);
+        return key is null
+            ? null
+            : new VerificationCredentials(key, new HmacSha256SignatureAlgorithm());
     }
 }
 
-// Register the algorithms you accept
-var registry = new SignatureAlgorithmRegistry();
-registry.Register(new HmacSha256SignatureAlgorithm());
-registry.Register(new EcdsaP256Sha256SignatureAlgorithm());
-
-// Verify — algorithm and key are resolved from the Signature-Input header
 var verifier = new HttpMessageVerifier();
-var result = await verifier.VerifyAsync("sig1", context, new MyKeyResolver(), registry);
+var result = await verifier.VerifyAsync(
+    "sig1", context, new MyCredentialsResolver());
 ```
 
-The `alg` and `keyid` parameters must be present in the `Signature-Input` header when using `VerifyAsync`.
+`keyid` is required for runtime resolution. The incoming `alg` value does not
+select an algorithm; it is checked for agreement with the trusted credential
+when present. The message and signature base are snapshotted before the
+resolver is awaited.
+
+## Security Boundaries
+
+- Signing a `Content-Digest` field protects that field's value; it does not
+  compare the digest to the message body. Applications must perform body-digest
+  verification separately.
+- Signature verification and policy acceptance do not replace authorization.
+- HTTP framework adapters must provide complete request/response context,
+  including trailers, before signing or verification.
+- This package defines the atomic nonce-store contract but does not provide a
+  production distributed implementation.

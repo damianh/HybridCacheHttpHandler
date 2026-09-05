@@ -52,7 +52,7 @@ public sealed class HttpMessageSignerTests
         result.SignatureInputHeaderValue.ShouldStartWith("sig1=");
         result.SignatureHeaderValue.ShouldStartWith("sig1=:");
         result.SignatureHeaderValue.ShouldEndWith(":");
-        result.SignatureBytes.ShouldNotBeEmpty();
+        result.SignatureBytes.Length.ShouldBeGreaterThan(0);
     }
 
     [Fact]
@@ -105,8 +105,24 @@ public sealed class HttpMessageSignerTests
         var result2 = Signer.Sign("sig2", ctx, parameters, TestSigningKey, Algorithm);
 
         // Same bytes — label doesn't affect signature base
-        result1.SignatureBytes.ShouldBe(result2.SignatureBytes);
+        result1.SignatureBytes.ToArray().ShouldBe(result2.SignatureBytes.ToArray());
         // But different header values (different labels)
         result1.SignatureHeaderValue.ShouldNotBe(result2.SignatureHeaderValue);
+    }
+
+    [Fact]
+    public void Sign_RejectsConflictingCredentialMetadata()
+    {
+        var parameters = new SignatureParameters([ComponentIdentifier.Method])
+        {
+            KeyId = "different-key",
+        };
+
+        Should.Throw<ArgumentException>(() =>
+            Signer.Sign(
+                "sig1",
+                BuildTestRequest(),
+                parameters,
+                new SigningCredentials(TestSigningKey, Algorithm)));
     }
 }

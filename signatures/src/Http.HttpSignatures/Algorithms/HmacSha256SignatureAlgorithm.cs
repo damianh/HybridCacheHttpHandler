@@ -17,6 +17,20 @@ public sealed class HmacSha256SignatureAlgorithm : ISignatureAlgorithm
     public string AlgorithmName => "hmac-sha256";
 
     /// <inheritdoc/>
+    public bool IsCompatible(SigningKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return key is HmacSharedKey;
+    }
+
+    /// <inheritdoc/>
+    public bool IsCompatible(VerificationKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return key is HmacSharedVerificationKey;
+    }
+
+    /// <inheritdoc/>
     public byte[] Sign(ReadOnlySpan<byte> signatureBase, SigningKey key)
     {
         ArgumentNullException.ThrowIfNull(key);

@@ -263,6 +263,48 @@ public class SignatureBaseBuilderTests
     }
 
     [Fact]
+    public void Build_DuplicateComponent_DifferentParameterOrder_ThrowsSignatureBaseException()
+    {
+        // Two identifiers for the same field+parameter set, but built through different code
+        // paths, must still be detected as duplicates: RFC 9421 §2.5 duplicate detection is not
+        // allowed to depend on wire parameter serialization order.
+        var first = new ComponentIdentifier("content-type") { Sf = true, Req = true };
+        var wireParameters = new DamianH.Http.StructuredFieldValues.Parameters();
+        wireParameters.Add("req", DamianH.Http.StructuredFieldValues.BooleanItem.True);
+        wireParameters.Add("sf", DamianH.Http.StructuredFieldValues.BooleanItem.True);
+        var second = ComponentIdentifier.FromWire("content-type", wireParameters);
+
+        var parameters = new SignatureParameters([first, second]);
+        var ctx = BuildTestRequest();
+
+        Should.Throw<SignatureBaseException>(() => SignatureBaseBuilder.BuildString(parameters, ctx));
+    }
+
+    [Fact]
+    public void Build_NonAsciiFieldValue_ThrowsSignatureBaseException()
+    {
+        var ctx = BuildTestRequest();
+        ctx.AddHeader("x-non-ascii", "café");
+        var parameters = new SignatureParameters([ComponentIdentifier.Field("x-non-ascii")]);
+
+        Should.Throw<SignatureBaseException>(() => SignatureBaseBuilder.BuildString(parameters, ctx));
+    }
+
+    [Fact]
+    public void Build_TrailerComponent_IncludedInSignatureBase()
+    {
+        var ctx = TestHttpMessageContext.CreateResponse(200, BuildTestRequest());
+        ctx.SetTrailer("expires", "Wed, 9 Nov 2022 07:28:00 GMT");
+        var parameters = new SignatureParameters([new ComponentIdentifier("expires") { Tr = true }]);
+
+        var result = SignatureBaseBuilder.BuildString(parameters, ctx);
+
+        result.ShouldBe(
+            "\"expires\";tr: Wed, 9 Nov 2022 07:28:00 GMT\n" +
+            "\"@signature-params\": (\"expires\";tr)");
+    }
+
+    [Fact]
     public void Build_MissingHeaderField_ThrowsSignatureBaseException()
     {
         var parameters = new SignatureParameters([ComponentIdentifier.Field("x-nonexistent")]);
@@ -302,5 +344,18 @@ public class SignatureBaseBuilderTests
         var bytes = SignatureBaseBuilder.Build(parameters, ctx);
 
         System.Text.Encoding.ASCII.GetString(bytes).ShouldBe(str);
+    }
+
+    [Fact]
+    public void Build_FieldValueWithInjectedLineBreak_ThrowsSignatureBaseException()
+    {
+        var context = TestHttpMessageContext.CreateRequest(
+            "GET", "https", "example.com", "/");
+        context.AddHeader("x-value", "first\nsecond");
+        var parameters = new SignatureParameters(
+            [ComponentIdentifier.Field("x-value")]);
+
+        Should.Throw<SignatureBaseException>(() =>
+            SignatureBaseBuilder.Build(parameters, context));
     }
 }

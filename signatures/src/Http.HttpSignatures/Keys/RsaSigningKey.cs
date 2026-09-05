@@ -15,20 +15,16 @@ public sealed class RsaSigningKey : SigningKey
     /// </summary>
     /// <param name="keyId">The key identifier.</param>
     /// <param name="rsa">The RSA key (must contain the private key).</param>
-    /// <param name="algorithmHint">Optional algorithm hint.</param>
-    public RsaSigningKey(string keyId, RSA rsa, string? algorithmHint = null)
+    public RsaSigningKey(string keyId, RSA rsa)
         : base(keyId)
     {
         ArgumentNullException.ThrowIfNull(rsa);
         Rsa = rsa;
-        AlgorithmHint = algorithmHint;
     }
 
     /// <summary>Gets the RSA key.</summary>
     public RSA Rsa { get; }
 
-    /// <inheritdoc/>
-    public override string? AlgorithmHint { get; }
 }
 
 /// <summary>
@@ -41,18 +37,14 @@ public sealed class RsaVerificationKey : VerificationKey
     /// </summary>
     /// <param name="keyId">The key identifier.</param>
     /// <param name="rsa">The RSA key (public key only is sufficient).</param>
-    /// <param name="algorithmHint">Optional algorithm hint.</param>
-    public RsaVerificationKey(string keyId, RSA rsa, string? algorithmHint = null)
+    public RsaVerificationKey(string keyId, RSA rsa)
         : base(keyId)
     {
         ArgumentNullException.ThrowIfNull(rsa);
         Rsa = rsa;
-        AlgorithmHint = algorithmHint;
     }
 
     /// <summary>Gets the RSA key.</summary>
     public RSA Rsa { get; }
 
-    /// <inheritdoc/>
-    public override string? AlgorithmHint { get; }
 }

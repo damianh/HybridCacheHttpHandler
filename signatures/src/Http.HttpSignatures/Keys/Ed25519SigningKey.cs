@@ -9,6 +9,8 @@ namespace DamianH.Http.HttpSignatures.Keys;
 /// </summary>
 public sealed class Ed25519SigningKey : SigningKey
 {
+    private readonly byte[] _privateKeyBytes;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="Ed25519SigningKey"/> class.
     /// </summary>
@@ -18,14 +20,12 @@ public sealed class Ed25519SigningKey : SigningKey
         : base(keyId)
     {
         ArgumentNullException.ThrowIfNull(privateKeyBytes);
-        PrivateKeyBytes = privateKeyBytes;
+        _privateKeyBytes = (byte[])privateKeyBytes.Clone();
     }
 
-    /// <summary>Gets the raw Ed25519 private key bytes.</summary>
-    public byte[] PrivateKeyBytes { get; }
+    /// <summary>Gets read-only access to the raw Ed25519 private key bytes.</summary>
+    public ReadOnlySpan<byte> PrivateKeyBytes => _privateKeyBytes;
 
-    /// <inheritdoc/>
-    public override string? AlgorithmHint => "ed25519";
 }
 
 /// <summary>
@@ -34,6 +34,8 @@ public sealed class Ed25519SigningKey : SigningKey
 /// </summary>
 public sealed class Ed25519VerificationKey : VerificationKey
 {
+    private readonly byte[] _publicKeyBytes;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="Ed25519VerificationKey"/> class.
     /// </summary>
@@ -43,12 +45,10 @@ public sealed class Ed25519VerificationKey : VerificationKey
         : base(keyId)
     {
         ArgumentNullException.ThrowIfNull(publicKeyBytes);
-        PublicKeyBytes = publicKeyBytes;
+        _publicKeyBytes = (byte[])publicKeyBytes.Clone();
     }
 
-    /// <summary>Gets the raw Ed25519 public key bytes.</summary>
-    public byte[] PublicKeyBytes { get; }
+    /// <summary>Gets read-only access to the raw Ed25519 public key bytes.</summary>
+    public ReadOnlySpan<byte> PublicKeyBytes => _publicKeyBytes;
 
-    /// <inheritdoc/>
-    public override string? AlgorithmHint => "ed25519";
 }

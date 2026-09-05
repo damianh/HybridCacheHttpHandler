@@ -18,6 +18,20 @@ public sealed class RsaPssSha512SignatureAlgorithm : ISignatureAlgorithm
     public string AlgorithmName => "rsa-pss-sha512";
 
     /// <inheritdoc/>
+    public bool IsCompatible(SigningKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return key is RsaSigningKey;
+    }
+
+    /// <inheritdoc/>
+    public bool IsCompatible(VerificationKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return key is RsaVerificationKey;
+    }
+
+    /// <inheritdoc/>
     public byte[] Sign(ReadOnlySpan<byte> signatureBase, SigningKey key)
     {
         ArgumentNullException.ThrowIfNull(key);

@@ -115,29 +115,89 @@ public sealed class HttpMessageVerifierTests
     }
 
     [Fact]
-    public async Task VerifyAsync_WithKeyResolverAndRegistry_Succeeds()
+    public async Task VerifyAsync_WithCredentialResolver_Succeeds()
     {
         var ctx = BuildSignedRequestWithAlgorithm();
 
-        var keyResolver = new TestKeyResolver(TestVerificationKey);
-        var registry = new SignatureAlgorithmRegistry();
-        registry.Register(Algorithm);
+        var resolver = new TestCredentialsResolver(
+            new VerificationCredentials(TestVerificationKey, Algorithm));
 
-        var result = await Verifier.VerifyAsync("sig1", ctx, keyResolver, registry);
+        var result = await Verifier.VerifyAsync("sig1", ctx, resolver);
         result.IsValid.ShouldBeTrue();
+        result.CredentialKeyId.ShouldBe("test-shared-secret");
     }
 
     [Fact]
-    public async Task VerifyAsync_UnknownAlgorithm_ReturnsFailed()
+    public async Task VerifyAsync_ConflictingCredentials_ReturnsFailed()
     {
         var ctx = BuildSignedRequestWithAlgorithm();
 
-        var keyResolver = new TestKeyResolver(TestVerificationKey);
-        var registry = new SignatureAlgorithmRegistry(); // no algorithms registered
+        var resolver = new TestCredentialsResolver(
+            new VerificationCredentials(
+                RfcTestKeys.RsaPssVerificationKey,
+                new RsaPssSha512SignatureAlgorithm()));
 
-        var result = await Verifier.VerifyAsync("sig1", ctx, keyResolver, registry);
+        var result = await Verifier.VerifyAsync("sig1", ctx, resolver);
         result.IsValid.ShouldBeFalse();
-        result.ErrorMessage!.ShouldContain("not registered");
+        result.FailureCode.ShouldBe(VerificationFailureCode.CredentialKeyMismatch);
+    }
+
+    [Fact]
+    public async Task VerifyAsync_SnapshotsMessageBeforeCredentialResolution()
+    {
+        var ctx = BuildSignedRequestWithAlgorithm();
+        var resolver = new MutatingCredentialsResolver(
+            ctx,
+            new VerificationCredentials(TestVerificationKey, Algorithm));
+
+        var result = await Verifier.VerifyAsync("sig1", ctx, resolver);
+
+        result.IsValid.ShouldBeTrue(result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task VerifyAsync_PropagatesResolverCancellation()
+    {
+        var ctx = BuildSignedRequestWithAlgorithm();
+        var resolver = new CancelledCredentialsResolver();
+
+        await Should.ThrowAsync<OperationCanceledException>(async () =>
+            await Verifier.VerifyAsync("sig1", ctx, resolver));
+    }
+
+    [Fact]
+    public void Verify_MalformedTimestamp_ReturnsTypedFailure()
+    {
+        var ctx = TestHttpMessageContext.CreateRequest("GET", "https", "example.com", "/");
+        ctx.AddHeader("signature-input", "sig1=();created=999999999999999");
+        ctx.AddHeader("signature", "sig1=:AA==:");
+
+        var result = Verifier.Verify("sig1", ctx, TestVerificationKey, Algorithm);
+
+        result.FailureCode.ShouldBe(VerificationFailureCode.MalformedSignatureInput);
+    }
+
+    [Fact]
+    public void Verify_ConflictingSignedAlgorithm_ReturnsTypedFailure()
+    {
+        var ctx = TestHttpMessageContext.CreateRequest("GET", "https", "example.com", "/");
+        var parameters = new SignatureParameters([ComponentIdentifier.Method])
+        {
+            KeyId = TestVerificationKey.KeyId,
+            Algorithm = "different-algorithm",
+        };
+        var signatureBase = SignatureBaseBuilder.Build(parameters, ctx);
+        var signature = Algorithm.Sign(signatureBase, TestSigningKey);
+        ctx.AddHeader(
+            "signature-input",
+            SignatureHeaderParser.SerializeSignatureInput("sig1", parameters));
+        ctx.AddHeader(
+            "signature",
+            SignatureHeaderParser.SerializeSignature("sig1", signature));
+
+        var result = Verifier.Verify("sig1", ctx, TestVerificationKey, Algorithm);
+
+        result.FailureCode.ShouldBe(VerificationFailureCode.AlgorithmMismatch);
     }
 
     [Fact]
@@ -145,13 +205,12 @@ public sealed class HttpMessageVerifierTests
     {
         var ctx = BuildSignedRequestWithAlgorithm();
 
-        var keyResolver = new TestKeyResolver(null); // key not found
-        var registry = new SignatureAlgorithmRegistry();
-        registry.Register(Algorithm);
+        var resolver = new TestCredentialsResolver(null);
 
-        var result = await Verifier.VerifyAsync("sig1", ctx, keyResolver, registry);
+        var result = await Verifier.VerifyAsync("sig1", ctx, resolver);
         result.IsValid.ShouldBeFalse();
         result.ErrorMessage!.ShouldContain("could not be resolved");
+        result.FailureCode.ShouldBe(VerificationFailureCode.CredentialsNotFound);
     }
 
     private static TestHttpMessageContext BuildSignedRequestWithAlgorithm()
@@ -178,9 +237,34 @@ public sealed class HttpMessageVerifierTests
         return ctx;
     }
 
-    private sealed class TestKeyResolver(VerificationKey? key) : IKeyResolver
+    private sealed class TestCredentialsResolver(VerificationCredentials? credentials)
+        : IVerificationCredentialsResolver
     {
-        public Task<VerificationKey?> ResolveKeyAsync(string keyId, CancellationToken cancellationToken = default) =>
-            Task.FromResult(key);
+        public ValueTask<VerificationCredentials?> ResolveAsync(
+            string keyId,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(credentials);
+    }
+
+    private sealed class MutatingCredentialsResolver(
+        TestHttpMessageContext context,
+        VerificationCredentials credentials) : IVerificationCredentialsResolver
+    {
+        public ValueTask<VerificationCredentials?> ResolveAsync(
+            string keyId,
+            CancellationToken cancellationToken = default)
+        {
+            context.SetHeader("content-type", "text/plain");
+            return ValueTask.FromResult<VerificationCredentials?>(credentials);
+        }
+    }
+
+    private sealed class CancelledCredentialsResolver : IVerificationCredentialsResolver
+    {
+        public ValueTask<VerificationCredentials?> ResolveAsync(
+            string keyId,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<VerificationCredentials?>(
+                new OperationCanceledException(cancellationToken));
     }
 }

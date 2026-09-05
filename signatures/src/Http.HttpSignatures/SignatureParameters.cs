@@ -12,25 +12,50 @@ namespace DamianH.Http.HttpSignatures;
 public sealed class SignatureParameters
 {
     /// <summary>
+    /// The exact wire metadata parameters as parsed, preserving order and any unknown parameters,
+    /// for full-fidelity round-trip serialization. Null for locally constructed instances, which
+    /// instead serialize the typed properties in RFC 9421 canonical order.
+    /// </summary>
+    private readonly Parameters? _wireParameters;
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="SignatureParameters"/> class.
     /// </summary>
     /// <param name="coveredComponents">The ordered list of component identifiers to cover.</param>
     public SignatureParameters(IReadOnlyList<ComponentIdentifier> coveredComponents)
     {
         ArgumentNullException.ThrowIfNull(coveredComponents);
-        CoveredComponents = coveredComponents;
+
+        // Defensive copy: a caller-supplied list must not be able to change this instance afterward.
+        CoveredComponents = Array.AsReadOnly(coveredComponents.ToArray());
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SignatureParameters"/> class from parsed wire data,
+    /// preserving the exact metadata parameter order (including unknown parameters) for round-trip fidelity.
+    /// </summary>
+    private SignatureParameters(
+        IReadOnlyList<ComponentIdentifier> coveredComponents,
+        Parameters wireParameters,
+        DateTimeOffset? created,
+        DateTimeOffset? expires,
+        string? nonce,
+        string? algorithm,
+        string? keyId,
+        string? tag)
+    {
+        CoveredComponents = Array.AsReadOnly(coveredComponents.ToArray());
+        _wireParameters = new Parameters(wireParameters);
+        Created = created;
+        Expires = expires;
+        Nonce = nonce;
+        Algorithm = algorithm;
+        KeyId = keyId;
+        Tag = tag;
     }
 
     /// <summary>Gets the ordered list of covered component identifiers.</summary>
     public IReadOnlyList<ComponentIdentifier> CoveredComponents { get; }
-
-    /// <summary>
-    /// Gets the canonical serialization of the parsed <c>Signature-Input</c>
-    /// member, preserving parameter order and unknown parameters.
-    /// This is not the original wire text. When null, <see cref="Serialize"/>
-    /// serializes the configured properties.
-    /// </summary>
-    internal string? ParsedCanonicalValue { get; init; }
 
     /// <summary>Gets the Unix timestamp of when the signature was created.</summary>
     public DateTimeOffset? Created { get; init; }
@@ -58,9 +83,12 @@ public sealed class SignatureParameters
     /// <returns>The serialized Inner List string.</returns>
     public string Serialize()
     {
-        if (ParsedCanonicalValue is not null)
+        if (_wireParameters is not null)
         {
-            return ParsedCanonicalValue;
+            // Full-fidelity round trip: reproduce the exact wire metadata parameter order,
+            // including any parameters not represented by a typed property.
+            var wireList = new InnerList(CoveredComponents.Select(c => c.ToStructuredFieldItem()), _wireParameters);
+            return StructuredFieldSerializer.SerializeInnerList(wireList);
         }
 
         var innerList = new InnerList(CoveredComponents.Select(c => c.ToStructuredFieldItem()));
@@ -105,37 +133,9 @@ public sealed class SignatureParameters
                     $"Component identifier at index {i} must be an SF String, but was {item.Value.GetType().Name}.");
             }
 
-            var name = nameItem.StringValue;
-            var componentParams = item.Parameters;
-
-            var sf = componentParams.ContainsKey("sf");
-            string? key = null;
-            if (componentParams.TryGetValue("key", out var keyItem))
-            {
-                if (keyItem is not StringItem keyStr)
-                    throw new FormatException("Component identifier 'key' parameter must be an SF String.");
-                key = keyStr.StringValue;
-            }
-            var bs = componentParams.ContainsKey("bs");
-            var req = componentParams.ContainsKey("req");
-            var tr = componentParams.ContainsKey("tr");
-            string? queryParamName = null;
-            if (componentParams.TryGetValue("name", out var nameParamItem))
-            {
-                if (nameParamItem is not StringItem nameParamStr)
-                    throw new FormatException("Component identifier 'name' parameter must be an SF String.");
-                queryParamName = nameParamStr.StringValue;
-            }
-
-            coveredComponents.Add(new ComponentIdentifier(name)
-            {
-                Sf = sf,
-                Key = key,
-                Bs = bs,
-                Req = req,
-                Tr = tr,
-                QueryParamName = queryParamName,
-            });
+            // Preserves unknown component parameters and validates reserved parameter types;
+            // does not silently repair a non-lowercase wire name.
+            coveredComponents.Add(ComponentIdentifier.FromWire(nameItem.StringValue, item.Parameters));
         }
 
         var sigParams = innerList.Parameters;
@@ -145,7 +145,7 @@ public sealed class SignatureParameters
         {
             if (createdItem is not IntegerItem createdInt)
                 throw new FormatException("Signature parameter 'created' must be an SF Integer.");
-            created = DateTimeOffset.FromUnixTimeSeconds(createdInt.LongValue);
+            created = ParseTimestamp("created", createdInt.LongValue);
         }
 
         DateTimeOffset? expires = null;
@@ -153,7 +153,7 @@ public sealed class SignatureParameters
         {
             if (expiresItem is not IntegerItem expiresInt)
                 throw new FormatException("Signature parameter 'expires' must be an SF Integer.");
-            expires = DateTimeOffset.FromUnixTimeSeconds(expiresInt.LongValue);
+            expires = ParseTimestamp("expires", expiresInt.LongValue);
         }
 
         string? nonce = null;
@@ -188,15 +188,20 @@ public sealed class SignatureParameters
             tag = tagStr.StringValue;
         }
 
-        return new SignatureParameters(coveredComponents)
+        return new SignatureParameters(coveredComponents, sigParams, created, expires, nonce, alg, keyId, tag);
+    }
+
+    private static DateTimeOffset ParseTimestamp(string parameterName, long value)
+    {
+        try
         {
-            Created = created,
-            Expires = expires,
-            Nonce = nonce,
-            Algorithm = alg,
-            KeyId = keyId,
-            Tag = tag,
-            ParsedCanonicalValue = StructuredFieldSerializer.SerializeInnerList(innerList),
-        };
+            return DateTimeOffset.FromUnixTimeSeconds(value);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            throw new FormatException(
+                $"Signature parameter '{parameterName}' is outside the supported timestamp range.",
+                ex);
+        }
     }
 }

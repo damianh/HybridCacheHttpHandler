@@ -9,23 +9,27 @@ namespace DamianH.Http.HttpSignatures;
 /// </summary>
 public sealed class SignatureResult
 {
+    private readonly byte[] _signatureBytes;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="SignatureResult"/> class.
     /// </summary>
     /// <param name="label">The signature label.</param>
     /// <param name="signatureInputHeaderValue">The serialized <c>Signature-Input</c> member value.</param>
     /// <param name="signatureHeaderValue">The serialized <c>Signature</c> member value.</param>
-    /// <param name="signatureBytes">The raw signature bytes.</param>
+    /// <param name="signatureBytes">The raw signature bytes. Cloned defensively; the caller's array is not retained.</param>
     public SignatureResult(
         string label,
         string signatureInputHeaderValue,
         string signatureHeaderValue,
         byte[] signatureBytes)
     {
+        ArgumentNullException.ThrowIfNull(signatureBytes);
+
         Label = label;
         SignatureInputHeaderValue = signatureInputHeaderValue;
         SignatureHeaderValue = signatureHeaderValue;
-        SignatureBytes = signatureBytes;
+        _signatureBytes = (byte[])signatureBytes.Clone();
     }
 
     /// <summary>Gets the signature label (e.g., "sig1").</summary>
@@ -43,6 +47,11 @@ public sealed class SignatureResult
     /// </summary>
     public string SignatureHeaderValue { get; }
 
-    /// <summary>Gets the raw signature bytes.</summary>
-    public byte[] SignatureBytes { get; }
+    /// <summary>
+    /// Gets read-only access to the immutable raw signature bytes, without exposing the backing array.
+    /// </summary>
+    public ReadOnlySpan<byte> SignatureBytes => _signatureBytes;
+
+    /// <summary>Returns a new defensive copy of the raw signature bytes.</summary>
+    public byte[] ToArray() => (byte[])_signatureBytes.Clone();
 }

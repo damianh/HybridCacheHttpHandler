@@ -216,7 +216,7 @@ internal static class RfcTestKeys
         var derBytes = PemToDer(RsaPssPrivateKeyPem, "PRIVATE KEY");
         var innerKey = ExtractPrivateKeyFromPkcs8(derBytes);
         rsa.ImportRSAPrivateKey(innerKey, out _);
-        return new RsaSigningKey("test-key-rsa-pss", rsa, "rsa-pss-sha512");
+        return new RsaSigningKey("test-key-rsa-pss", rsa);
     }
 
     private static RsaVerificationKey CreateRsaPssVerificationKey()
@@ -224,7 +224,7 @@ internal static class RfcTestKeys
         // The RSA-PSS public key uses standard SPKI format with RSA OID — ImportFromPem works fine.
         var rsa = RSA.Create();
         rsa.ImportFromPem(RsaPssPublicKeyPem);
-        return new RsaVerificationKey("test-key-rsa-pss", rsa, "rsa-pss-sha512");
+        return new RsaVerificationKey("test-key-rsa-pss", rsa);
     }
 
     private static RsaSigningKey CreateRsaSigningKey()
@@ -239,7 +239,7 @@ internal static class RfcTestKeys
             FromBase64Url(RsaModulusB64),
             FromBase64Url(RsaExponentB64),
             FromBase64Url(RsaPrivateExponentB64));
-        return new RsaSigningKey("test-key-rsa", rsa, "rsa-v1_5-sha256");
+        return new RsaSigningKey("test-key-rsa", rsa);
     }
 
     private static RsaVerificationKey CreateRsaVerificationKey()
@@ -251,7 +251,7 @@ internal static class RfcTestKeys
             Modulus = FromBase64Url(RsaModulusB64),
             Exponent = FromBase64Url(RsaExponentB64),
         });
-        return new RsaVerificationKey("test-key-rsa", rsa, "rsa-v1_5-sha256");
+        return new RsaVerificationKey("test-key-rsa", rsa);
     }
 
     // RFC 9421 Appendix B.1.1 JWK values (base64url-encoded, RFC 8792 line wrapping removed).
@@ -390,14 +390,14 @@ internal static class RfcTestKeys
     {
         var ecdsa = ECDsa.Create();
         ecdsa.ImportFromPem(EccP256PrivateKeyPem);
-        return new EcdsaSigningKey("test-key-ecc-p256", ecdsa, "ecdsa-p256-sha256");
+        return new EcdsaSigningKey("test-key-ecc-p256", ecdsa);
     }
 
     private static EcdsaVerificationKey CreateEcdsaP256VerificationKey()
     {
         var ecdsa = ECDsa.Create();
         ecdsa.ImportFromPem(EccP256PublicKeyPem);
-        return new EcdsaVerificationKey("test-key-ecc-p256", ecdsa, "ecdsa-p256-sha256");
+        return new EcdsaVerificationKey("test-key-ecc-p256", ecdsa);
     }
 
     /// <summary>
