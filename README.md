@@ -5,7 +5,7 @@
 [![.NET](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
 [![GitHub Stars](https://img.shields.io/github/stars/damianh/http-libs.svg)](https://github.com/damianh/http-libs/stargazers)
 
-A collection of .NET libraries for HTTP caching, structured field values, and message signatures.
+A collection of .NET libraries for HTTP caching, structured field values, message signatures, and trusted-proxy forwarding.
 
 > [!NOTE]
 > Projects are new and being dog-fooded. If you try any of them out feedback would be appreciated!
@@ -18,6 +18,7 @@ A collection of .NET libraries for HTTP caching, structured field values, and me
 | [DamianH.FileDistributedCache](file-distributed-cache/README.md) | File-based `IDistributedCache` / `IBufferDistributedCache` for zero-infrastructure persistent caching | [![NuGet](https://img.shields.io/nuget/v/DamianH.FileDistributedCache.svg)](https://www.nuget.org/packages/DamianH.FileDistributedCache/) | [![Downloads](https://img.shields.io/nuget/dt/DamianH.FileDistributedCache.svg)](https://www.nuget.org/packages/DamianH.FileDistributedCache/) |
 | [DamianH.Http.StructuredFieldValues](structured-field-values/README.md) | RFC 8941/9651 parser, serializer, and POCO mapper for HTTP Structured Field Values | [![NuGet](https://img.shields.io/nuget/v/DamianH.Http.StructuredFieldValues.svg)](https://www.nuget.org/packages/DamianH.Http.StructuredFieldValues/) | [![Downloads](https://img.shields.io/nuget/dt/DamianH.Http.StructuredFieldValues.svg)](https://www.nuget.org/packages/DamianH.Http.StructuredFieldValues/) |
 | [DamianH.Http.HttpSignatures](signatures/README.md) | RFC 9421 HTTP Message Signatures for signing and verifying HTTP messages | [![NuGet](https://img.shields.io/nuget/v/DamianH.Http.HttpSignatures.svg)](https://www.nuget.org/packages/DamianH.Http.HttpSignatures/) | [![Downloads](https://img.shields.io/nuget/dt/DamianH.Http.HttpSignatures.svg)](https://www.nuget.org/packages/DamianH.Http.HttpSignatures/) |
+| [DamianH.Http.ForwardedHeaders](forwarded-headers/README.md) | RFC 7239 `Forwarded` parser and trusted-proxy middleware for ASP.NET Core | [![NuGet](https://img.shields.io/nuget/v/DamianH.Http.ForwardedHeaders.svg)](https://www.nuget.org/packages/DamianH.Http.ForwardedHeaders/) | [![Downloads](https://img.shields.io/nuget/dt/DamianH.Http.ForwardedHeaders.svg)](https://www.nuget.org/packages/DamianH.Http.ForwardedHeaders/) |
 
 ## Repository Structure
 
@@ -26,6 +27,7 @@ hybrid-cache-handler/         # RFC 9111 HTTP caching DelegatingHandler
 file-distributed-cache/       # File-based IDistributedCache implementation
 structured-field-values/      # RFC 8941/9651 structured field values
 signatures/                   # RFC 9421 HTTP message signatures
+forwarded-headers/            # RFC 7239 Forwarded parser and ASP.NET Core middleware
 ```
 
 ## Building
@@ -33,7 +35,7 @@ signatures/                   # RFC 9421 HTTP message signatures
 Each lib has its own build script and solution filter:
 
 ```bash
-dotnet run signatures/build.cs -- build   # or: structured-field-values, hybrid-cache-handler, file-distributed-cache
+dotnet run signatures/build.cs -- build   # or: forwarded-headers, structured-field-values, hybrid-cache-handler, file-distributed-cache
 dotnet build http-lib.slnx                # everything
 ```
 
