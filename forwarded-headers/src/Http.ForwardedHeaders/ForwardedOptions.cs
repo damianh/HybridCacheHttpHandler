@@ -44,32 +44,3 @@ public sealed class ForwardedOptions
     /// <summary>Gets or sets the original path base header name.</summary>
     public string OriginalPrefixHeaderName { get; set; } = "X-Original-Prefix";
 }
-
-/// <summary>Parameters that the middleware applies from accepted hops.</summary>
-[Flags]
-public enum ForwardedParameters
-{
-    /// <summary>Do not process the header.</summary>
-    None = 0,
-    /// <summary>Apply the client IP address and port.</summary>
-    For = 1,
-    /// <summary>Validate the proxy's by identifier and expose it as metadata; never grant trust from it.</summary>
-    By = 2,
-    /// <summary>Apply the original host.</summary>
-    Host = 4,
-    /// <summary>Apply the original URI scheme.</summary>
-    Proto = 8,
-    /// <summary>Apply all standard parameters. Does not enable PathBase.</summary>
-    All = For | By | Host | Proto,
-    /// <summary>Apply the nonstandard pathbase extension, replacing Request.PathBase.</summary>
-    PathBase = 16
-}
-
-/// <summary>Determines the response to malformed forwarding input.</summary>
-public enum MalformedHeaderBehavior
-{
-    /// <summary>Continue the request, retaining only fully validated nearer hops.</summary>
-    Ignore,
-    /// <summary>Return HTTP 400 without applying any forwarding changes or invoking the next delegate.</summary>
-    Reject
-}

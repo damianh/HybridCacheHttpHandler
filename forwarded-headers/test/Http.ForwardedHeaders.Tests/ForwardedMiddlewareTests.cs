@@ -606,13 +606,4 @@ public class ForwardedMiddlewareTests
         context.Request.Path.Value.ShouldBe("/resource");
         context.Request.Headers.Keys.ShouldNotContain(key => key.StartsWith("X-Original-", StringComparison.OrdinalIgnoreCase));
     }
-
-    private sealed class RecordingLogger : ILogger<ForwardedMiddleware>
-    {
-        internal List<string> Messages { get; } = [];
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
-    }
 }
