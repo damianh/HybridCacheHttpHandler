@@ -23,7 +23,7 @@ A collection of .NET libraries for HTTP caching, structured field values, and me
 
 The HTTP cache also has separately versioned [content-store packages](hybrid-cache-handler/README.md#optional-content-stores)
 for Azure Blob Storage, Amazon S3, Google Cloud Storage, and local files, sharing a
-provider-independent Abstractions package. Cloud adapters use official SDKs.
+provider-independent ContentStore package. Cloud adapters use official SDKs.
 
 ```
 hybrid-cache-handler/         # RFC 9111 HTTP caching DelegatingHandler

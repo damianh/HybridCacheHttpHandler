@@ -23,7 +23,7 @@
   </Folder>
   <Folder Name="/hybrid-cache-handler/src/">
     <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler/HttpHybridCacheHandler.csproj" />
-    <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.Abstractions/HttpHybridCacheHandler.Abstractions.csproj" />
+    <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.ContentStore/HttpHybridCacheHandler.ContentStore.csproj" />
     <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.ContentStore.AzureBlob/HttpHybridCacheHandler.ContentStore.AzureBlob.csproj" />
     <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.ContentStore.S3/HttpHybridCacheHandler.ContentStore.S3.csproj" />
     <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.ContentStore.GoogleCloudStorage/HttpHybridCacheHandler.ContentStore.GoogleCloudStorage.csproj" />

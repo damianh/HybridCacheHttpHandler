@@ -3,7 +3,7 @@
     "path": "..\\http-lib.slnx",
     "projects": [
       "hybrid-cache-handler\\src\\HttpHybridCacheHandler\\HttpHybridCacheHandler.csproj",
-      "hybrid-cache-handler\\src\\HttpHybridCacheHandler.Abstractions\\HttpHybridCacheHandler.Abstractions.csproj",
+      "hybrid-cache-handler\\src\\HttpHybridCacheHandler.ContentStore\\HttpHybridCacheHandler.ContentStore.csproj",
       "hybrid-cache-handler\\src\\HttpHybridCacheHandler.ContentStore.AzureBlob\\HttpHybridCacheHandler.ContentStore.AzureBlob.csproj",
       "hybrid-cache-handler\\src\\HttpHybridCacheHandler.ContentStore.S3\\HttpHybridCacheHandler.ContentStore.S3.csproj",
       "hybrid-cache-handler\\src\\HttpHybridCacheHandler.ContentStore.GoogleCloudStorage\\HttpHybridCacheHandler.ContentStore.GoogleCloudStorage.csproj",

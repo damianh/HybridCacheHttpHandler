@@ -303,13 +303,13 @@ Metadata and HTTP freshness remain in HybridCache. Choose one separately package
 
 | Package | Backend | Configuration |
 | --- | --- | --- |
-| `DamianH.HttpHybridCacheHandler.Abstractions` | Provider-independent streaming contracts, no cloud SDK dependency | [Contract and ownership rules](src/HttpHybridCacheHandler.Abstractions/README.md) |
+| `DamianH.HttpHybridCacheHandler.ContentStore` | Provider-independent streaming contracts, no cloud SDK dependency | [Contract and ownership rules](src/HttpHybridCacheHandler.ContentStore/README.md) |
 | `DamianH.HttpHybridCacheHandler.ContentStore.AzureBlob` | Official `Azure.Storage.Blobs` SDK | [Azure setup](src/HttpHybridCacheHandler.ContentStore.AzureBlob/README.md) |
 | `DamianH.HttpHybridCacheHandler.ContentStore.S3` | Official `AWSSDK.S3` SDK | [S3 setup](src/HttpHybridCacheHandler.ContentStore.S3/README.md) |
 | `DamianH.HttpHybridCacheHandler.ContentStore.GoogleCloudStorage` | Official `Google.Cloud.Storage.V1` SDK | [Google Cloud setup](src/HttpHybridCacheHandler.ContentStore.GoogleCloudStorage/README.md) |
 | `DamianH.HttpHybridCacheHandler.ContentStore.FileSystem` | Native file streams, no cloud SDK | [Filesystem setup](src/HttpHybridCacheHandler.ContentStore.FileSystem/README.md) |
 
-Adapters depend on Abstractions, not on the handler or HybridCache. Configure credentials,
+Adapters depend on ContentStore, not on the handler or HybridCache. Configure credentials,
 endpoints, and retries through an injected SDK client. Registration never provisions cloud
 resources or modifies lifecycle policies. Stowage and FluentStorage are not dependencies.
 
@@ -364,21 +364,21 @@ because one URL or variant was invalidated.
 
 #### Versioning and migration
 
-The handler, Abstractions, and each adapter have independent versions and release tags.
-Release compatible Abstractions versions before consumers. SDK updates need not force
+The handler, ContentStore, and each adapter have independent versions and release tags.
+Release compatible ContentStore versions before consumers. SDK updates need not force
 a handler release.
 
-The content-store interfaces retain their namespace but now live in the Abstractions
+The content-store interfaces retain their namespace but now live in the ContentStore
 assembly. Implementations migrate from a materialized sequence write to a seekable,
 caller-owned input stream with an explicit stored length. The adapter must leave the
 input stream open and finish consuming it before returning. Returned read streams are
 owned by the response/caller. This is a breaking change from the initial pre-release
 Stowage implementation, not a binary-compatible replacement.
 
-Build targets are `pack-handler`, `pack-abstractions`, `pack-azureblob`, `pack-s3`,
+Build targets are `pack-handler`, `pack-contentstore`, `pack-azureblob`, `pack-s3`,
 `pack-gcs`, and `pack-filesystem`; `pack-all` creates the local bundle. The release
 workflow selects one package and publishes only its exact artifact. Consumers declare
-the compatible Abstractions dependency floor through `HttpCacheAbstractionsPackageVersion`
+the compatible ContentStore dependency floor through `HttpCacheContentStorePackageVersion`
 (initially `0.1.0`), rather than leaking another project's computed prerelease version.
 
 ## Metrics

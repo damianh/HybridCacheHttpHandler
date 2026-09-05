@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <AssemblyName>DamianH.HttpHybridCacheHandler.Abstractions</AssemblyName>
+    <AssemblyName>DamianH.HttpHybridCacheHandler.ContentStore</AssemblyName>
     <RootNamespace>DamianH.HttpHybridCacheHandler</RootNamespace>
     <MinVerMinimumMajorMinor>0.1</MinVerMinimumMajorMinor>
-    <MinVerTagPrefix>cache-abstractions-v</MinVerTagPrefix>
+    <MinVerTagPrefix>cache-contentstore-v</MinVerTagPrefix>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
-    <PackageId>DamianH.HttpHybridCacheHandler.Abstractions</PackageId>
+    <PackageId>DamianH.HttpHybridCacheHandler.ContentStore</PackageId>
     <Authors>Damian Hickey</Authors>
     <Description>Provider-independent streaming HTTP cache content-store contracts.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
