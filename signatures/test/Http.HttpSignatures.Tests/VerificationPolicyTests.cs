@@ -234,6 +234,55 @@ public sealed class VerificationPolicyTests
                 }));
     }
 
+    [Fact]
+    public async Task ReplayPolicy_ValidateExpirationAloneDoesNotSatisfyEnforcedWindow()
+    {
+        // ValidateExpiration only enforces an expires value when one happens to be present; it
+        // does not guarantee a signed expires value exists, so it must not satisfy the replay
+        // protection requirement for a finite acceptance window.
+        var context = BuildSignedRequest(created: Now, nonce: "invalid-policy");
+
+        var exception = await Should.ThrowAsync<ArgumentException>(async () =>
+            await Verifier.VerifyAndValidateAsync(
+                "sig1",
+                context,
+                VerificationCredentials,
+                new VerificationPolicy
+                {
+                    ValidateExpiration = true,
+                    NonceStore = new AtomicNonceStore(),
+                    ReplayScope = "orders",
+                    TimeProvider = new FixedTimeProvider(Now),
+                }));
+
+        exception.Message.ShouldContain("RequireExpires");
+    }
+
+    [Fact]
+    public async Task ReplayPolicy_RequireExpiresWithoutMaximumAgeSatisfiesEnforcedWindow()
+    {
+        var context = BuildSignedRequest(
+            created: Now,
+            expires: Now.AddMinutes(5),
+            nonce: "require-expires-only");
+        var store = new AtomicNonceStore();
+
+        var acceptance = await Verifier.VerifyAndValidateAsync(
+            "sig1",
+            context,
+            VerificationCredentials,
+            new VerificationPolicy
+            {
+                RequireExpires = true,
+                NonceStore = store,
+                ReplayScope = "orders",
+                TimeProvider = new FixedTimeProvider(Now),
+            });
+
+        acceptance.IsAccepted.ShouldBeTrue(acceptance.ErrorMessage);
+        store.LastRetainUntil.ShouldBe(Now.AddMinutes(5));
+    }
+
     private static TestHttpMessageContext BuildSignedRequest(
         DateTimeOffset? created = null,
         DateTimeOffset? expires = null,

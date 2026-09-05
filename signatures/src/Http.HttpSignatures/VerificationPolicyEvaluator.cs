@@ -118,7 +118,8 @@ internal static class VerificationPolicyEvaluator
                 return VerificationAcceptanceResult.Rejected(
                     verification,
                     VerificationAcceptanceFailureCode.MissingExpires,
-                    "Replay protection requires an enforced expiration or maximum-age deadline.");
+                    "Replay protection requires a maximum-age deadline or a required expires " +
+                    "value; the policy must set MaximumAge or RequireExpires.");
             }
 
             var claimed = await policy.NonceStore.TryUseAsync(
@@ -157,11 +158,11 @@ internal static class VerificationPolicyEvaluator
 
         if (policy.NonceStore is not null &&
             !policy.MaximumAge.HasValue &&
-            !policy.ValidateExpiration &&
             !policy.RequireExpires)
         {
             throw new ArgumentException(
-                "Replay protection requires MaximumAge or enforced expiration.",
+                "Replay protection requires MaximumAge or RequireExpires; ValidateExpiration " +
+                "alone does not guarantee a signed expires value.",
                 nameof(policy));
         }
     }

@@ -188,9 +188,12 @@ Replay protection is opt-in through `INonceStore`. Its `TryUseAsync` operation
 must atomically claim a nonce across every server sharing a replay scope. A
 separate cache read followed by a write is not sufficient. When a nonce store
 is configured, policy must enforce a finite acceptance window using
-`MaximumAge` or expiration; the claim is retained through that deadline,
-including clock skew. Storage adapters, including any HybridCache adapter, are
-application concerns and are not included in this package.
+`MaximumAge` or `RequireExpires`; `ValidateExpiration` alone is not
+sufficient, because it only validates an expires value when one is present
+and does not guarantee one was signed. The claim is retained through the
+resulting deadline, including clock skew. Storage adapters, including any
+HybridCache adapter, are application concerns and are not included in this
+package.
 
 ### SignatureParameters
 

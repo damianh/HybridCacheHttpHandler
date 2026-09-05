@@ -123,9 +123,11 @@ public static class SignatureBaseBuilder
     }
 
     /// <summary>
-    /// Validates that a resolved component value contains only characters that are safe to encode
-    /// as ASCII (printable ASCII 0x20-0x7E, or the 0x0A line-feed component/line separator), so that
-    /// <see cref="Build"/> never has to silently replace an unrepresentable character with '?'.
+    /// Validates that a resolved component value contains only printable ASCII characters
+    /// (0x20-0x7E). Characters outside this range - including the 0x0A line-feed used as the
+    /// signature-base line separator - are rejected, so that <see cref="Build"/> never has to
+    /// silently replace an unrepresentable character with '?' or allow a value to inject an
+    /// extra line into the signature base.
     /// </summary>
     private static void ValidateAsciiSafe(ComponentIdentifier component, string value)
     {

@@ -2,6 +2,7 @@
 // See LICENSE in the project root for license information.
 
 using DamianH.Http.StructuredFieldValues;
+using System.Collections.ObjectModel;
 
 namespace DamianH.Http.HttpSignatures;
 
@@ -18,6 +19,15 @@ public sealed class ComponentIdentifier : IEquatable<ComponentIdentifier>
     /// which instead serialize the typed properties in RFC 9421 canonical order.
     /// </summary>
     private readonly Parameters? _wireParameters;
+
+    /// <summary>
+    /// Lazily computed, immutable snapshot of the parameter list, in the order described by
+    /// <see cref="Parameters"/>. <see cref="ComponentIdentifier"/> is immutable after
+    /// construction, so this is computed at most once and reused by <see cref="Parameters"/>,
+    /// <see cref="ToStructuredFieldItem"/>, <see cref="Equals(ComponentIdentifier?)"/>, and
+    /// <see cref="GetHashCode"/>.
+    /// </summary>
+    private ReadOnlyCollection<KeyValuePair<string, BareItem>>? _parameterList;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ComponentIdentifier"/> class.
@@ -90,7 +100,8 @@ public sealed class ComponentIdentifier : IEquatable<ComponentIdentifier>
     /// instance this reflects the known typed properties in RFC 9421 canonical order; for a parsed
     /// instance it reflects the exact wire order, including any unknown/extension parameters.
     /// </summary>
-    public IReadOnlyList<KeyValuePair<string, BareItem>> Parameters => [.. ToStructuredFieldItem().Parameters];
+    public IReadOnlyList<KeyValuePair<string, BareItem>> Parameters =>
+        LazyInitializer.EnsureInitialized(ref _parameterList, ComputeParameterList);
 
     /// <summary>
     /// Creates a component identifier for an HTTP field.
@@ -222,24 +233,44 @@ public sealed class ComponentIdentifier : IEquatable<ComponentIdentifier>
 
     internal StructuredFieldItem ToStructuredFieldItem()
     {
+        var item = new StructuredFieldItem(new StringItem(Name));
+
+        // Reuses the cached parameter list, which already reflects either the exact wire
+        // order (including unknown parameters) or the RFC 9421 §2.1 canonical order for a
+        // locally constructed instance. The item's Parameters is a fresh, owned collection
+        // (see StructuredFieldItem), so mutating it here never aliases the cached snapshot.
+        foreach (var kvp in Parameters)
+        {
+            item.Parameters.Add(kvp.Key, kvp.Value);
+        }
+
+        return item;
+    }
+
+    /// <summary>
+    /// Computes the immutable, order-preserving parameter snapshot backing
+    /// <see cref="Parameters"/>. Called at most once per instance and cached, since
+    /// <see cref="ComponentIdentifier"/> is immutable after construction.
+    /// </summary>
+    private ReadOnlyCollection<KeyValuePair<string, BareItem>> ComputeParameterList()
+    {
         if (_wireParameters is not null)
         {
             // Full-fidelity round trip: reproduce the exact wire parameter order, including
             // any parameters not represented by a typed property (e.g. future extensions).
-            return new StructuredFieldItem(new StringItem(Name), _wireParameters);
+            return Array.AsReadOnly(_wireParameters.ToArray());
         }
 
-        var item = new StructuredFieldItem(new StringItem(Name));
-
         // Locally constructed instance: RFC 9421 §2.1 canonical parameter order.
-        if (Sf) item.Parameters.Add("sf", BooleanItem.True);
-        if (Key is not null) item.Parameters.Add("key", new StringItem(Key));
-        if (Bs) item.Parameters.Add("bs", BooleanItem.True);
-        if (Req) item.Parameters.Add("req", BooleanItem.True);
-        if (Tr) item.Parameters.Add("tr", BooleanItem.True);
-        if (QueryParamName is not null) item.Parameters.Add("name", new StringItem(QueryParamName));
+        List<KeyValuePair<string, BareItem>> list = [];
+        if (Sf) list.Add(new("sf", BooleanItem.True));
+        if (Key is not null) list.Add(new("key", new StringItem(Key)));
+        if (Bs) list.Add(new("bs", BooleanItem.True));
+        if (Req) list.Add(new("req", BooleanItem.True));
+        if (Tr) list.Add(new("tr", BooleanItem.True));
+        if (QueryParamName is not null) list.Add(new("name", new StringItem(QueryParamName)));
 
-        return item;
+        return Array.AsReadOnly(list.ToArray());
     }
 
     /// <inheritdoc/>
