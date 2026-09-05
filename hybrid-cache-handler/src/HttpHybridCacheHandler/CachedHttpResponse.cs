@@ -23,6 +23,7 @@ internal sealed record CachedHttpMetadata
     public required int StatusCode { get; init; }
     public required string ContentKey { get; init; }
     public required long ContentLength { get; init; }
+    public long? OriginalContentLength { get; init; }
     public required Dictionary<string, string[]> Headers { get; init; }
     public required Dictionary<string, string[]> ContentHeaders { get; init; }
     public required DateTimeOffset CachedAt { get; init; }

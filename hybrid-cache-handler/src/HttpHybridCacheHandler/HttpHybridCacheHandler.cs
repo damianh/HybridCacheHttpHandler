@@ -954,6 +954,7 @@ public partial class HttpHybridCacheHandler : DelegatingHandler
             StatusCode = cached.StatusCode,
             ContentKey = cached.ContentKey,
             ContentLength = cached.ContentLength,
+            OriginalContentLength = cached.OriginalContentLength,
             Headers = mergedHeaders,
             ContentHeaders = mergedContentHeaders,
             CachedAt = _timeProvider.GetUtcNow(),
@@ -1204,9 +1205,11 @@ public partial class HttpHybridCacheHandler : DelegatingHandler
             UpsertHeaders(merged.Content.Headers, CaptureHeaders(originHeadResponse.Content.Headers));
         }
 
-        if (!merged.Content.Headers.ContentLength.HasValue && updatedCachedResponse.ContentLength > 0)
+        var originalLength = updatedCachedResponse.OriginalContentLength ??
+            (updatedCachedResponse.IsCompressed ? (long?)null : updatedCachedResponse.ContentLength);
+        if (!merged.Content.Headers.ContentLength.HasValue && originalLength.HasValue)
         {
-            merged.Content.Headers.ContentLength = updatedCachedResponse.ContentLength;
+            merged.Content.Headers.ContentLength = originalLength.Value;
         }
 
         return merged;
@@ -2787,12 +2790,12 @@ public partial class HttpHybridCacheHandler : DelegatingHandler
             response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        return CreateMetadata(response, rawHeaders, request, contentKey, contentToCache.LongLength, isCompressed,
+        return CreateMetadata(response, rawHeaders, request, contentKey, contentToCache.LongLength, originalContent.LongLength, isCompressed,
             ReferenceEquals(contentStore, _largeContentStore));
     }
 
     private CachedHttpMetadata CreateMetadata(HttpResponseMessage response, RawHeaderSnapshot rawHeaders,
-        HttpRequestMessage? request, string contentKey, long storedLength, bool isCompressed, bool storedExternally)
+        HttpRequestMessage? request, string contentKey, long storedLength, long originalLength, bool isCompressed, bool storedExternally)
     {
         var directives = GetEffectiveCacheDirectives(response);
         var originalContentHeaders = rawHeaders.ContentHeaders;
@@ -2887,6 +2890,7 @@ public partial class HttpHybridCacheHandler : DelegatingHandler
             StatusCode = (int)response.StatusCode,
             ContentKey = contentKey,
             ContentLength = storedLength,
+            OriginalContentLength = originalLength,
             Headers = headers,
             ContentHeaders = contentHeaders,
             CachedAt = _timeProvider.GetUtcNow(),

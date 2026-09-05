@@ -863,6 +863,35 @@ public sealed class StreamingFillTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Compressed_unknown_length_body_replays_original_length_after_HEAD(bool external)
+    {
+        var payload = Encoding.UTF8.GetBytes(new string('x', 4096));
+        var handler = new Origin(request => Response(
+            new GatedStream(request.Method == HttpMethod.Head ? [] : payload, released: true)));
+        var store = new Store();
+        await using var fixture = Fixture(handler, store, options =>
+        {
+            options.CompressionThreshold = 1;
+            options.LargeContentThreshold = external ? 16 : 0;
+        });
+        using var client = fixture.CreateClient();
+        (await client.GetByteArrayAsync(Url, _ct)).ShouldBe(payload);
+
+        using var request = new HttpRequestMessage(HttpMethod.Head, Url);
+        using var head = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, _ct);
+        head.Content.Headers.ContentLength.ShouldBe(payload.LongLength);
+        (await head.Content.ReadAsByteArrayAsync(_ct)).ShouldBeEmpty();
+        (await client.GetByteArrayAsync(Url, _ct)).ShouldBe(payload);
+        handler.Calls.ShouldBe(2);
+        if (external)
+        {
+            store.LastLength.ShouldBeLessThan(payload.LongLength);
+        }
+    }
+
+    [Theory]
     [InlineData(-1, 1024, 1)]
     [InlineData(1, -1, 1)]
     [InlineData(1, 1024, -1)]

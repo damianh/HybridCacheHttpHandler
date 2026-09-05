@@ -98,7 +98,7 @@ public partial class HttpHybridCacheHandler
         }
 
         // Everything used after returning headers is a private immutable snapshot.
-        var metadata = CreateMetadata(response, rawHeaders, request, "", 0, false, false);
+        var metadata = CreateMetadata(response, rawHeaders, request, "", 0, 0, false, false);
         var compressible = IsCompressible(response.Content.Headers.ContentType?.MediaType);
         var uriTag = GetUriTag(request.RequestUri);
         var uri = request.RequestUri;
@@ -136,6 +136,7 @@ public partial class HttpHybridCacheHandler
                     {
                         ContentKey = contentKey,
                         ContentLength = stored.Length,
+                        OriginalContentLength = spool.Length,
                         IsCompressed = compress,
                         IsStoredExternally = ReferenceEquals(contentStore, _largeContentStore),
                         PublicationSession = context.Session,
