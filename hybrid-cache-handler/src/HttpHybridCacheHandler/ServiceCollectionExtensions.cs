@@ -104,6 +104,7 @@ public static class ServiceCollectionExtensions
             options.IncludeDiagnosticHeaders = previewOptions.IncludeDiagnosticHeaders;
             options.Mode = previewOptions.Mode;
             options.TargetedCacheControlHeaderNames = previewOptions.TargetedCacheControlHeaderNames;
+        }
 
         /// <summary>
         /// Registers the optional content store used for large cached responses.
