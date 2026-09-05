@@ -235,6 +235,26 @@ public sealed class VerificationPolicyTests
     }
 
     [Fact]
+    public async Task ReplayPolicy_RequiresReplayScope()
+    {
+        var context = BuildSignedRequest(created: Now, nonce: "invalid-policy");
+
+        var exception = await Should.ThrowAsync<ArgumentException>(async () =>
+            await Verifier.VerifyAndValidateAsync(
+                "sig1",
+                context,
+                VerificationCredentials,
+                new VerificationPolicy
+                {
+                    MaximumAge = TimeSpan.FromMinutes(5),
+                    NonceStore = new AtomicNonceStore(),
+                    TimeProvider = new FixedTimeProvider(Now),
+                }));
+
+        exception.ParamName.ShouldBe(nameof(VerificationPolicy.ReplayScope));
+    }
+
+    [Fact]
     public async Task ReplayPolicy_ValidateExpirationAloneDoesNotSatisfyEnforcedWindow()
     {
         // ValidateExpiration only enforces an expires value when one happens to be present; it

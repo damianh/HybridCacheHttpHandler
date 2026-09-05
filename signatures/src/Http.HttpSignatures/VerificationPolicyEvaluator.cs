@@ -153,7 +153,7 @@ internal static class VerificationPolicyEvaluator
         {
             throw new ArgumentException(
                 "ReplayScope is required when a nonce store is configured.",
-                nameof(policy));
+                nameof(policy.ReplayScope));
         }
 
         if (policy.NonceStore is not null &&
