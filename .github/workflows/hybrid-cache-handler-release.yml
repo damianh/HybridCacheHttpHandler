@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       package:
-        description: 'Package to release (release abstractions before its consumers)'
+        description: 'Package to release (release contentstore before its consumers)'
         required: true
         type: choice
         default: handler
         options:
           - handler
-          - abstractions
+          - contentstore
           - azureblob
           - s3
           - gcs
@@ -37,7 +37,7 @@ jobs:
         run: |
           case "$PACKAGE" in
             handler)      suffix=""; tag="cache-v" ;;
-            abstractions) suffix=".Abstractions"; tag="cache-abstractions-v" ;;
+            contentstore) suffix=".ContentStore"; tag="cache-contentstore-v" ;;
             azureblob)    suffix=".ContentStore.AzureBlob"; tag="cache-azureblob-v" ;;
             s3)           suffix=".ContentStore.S3"; tag="cache-s3-v" ;;
             gcs)          suffix=".ContentStore.GoogleCloudStorage"; tag="cache-gcs-v" ;;

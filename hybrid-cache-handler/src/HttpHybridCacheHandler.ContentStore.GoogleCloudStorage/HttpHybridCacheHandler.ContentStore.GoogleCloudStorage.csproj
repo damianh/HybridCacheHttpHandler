@@ -21,6 +21,6 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.10" />
     <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="all" />
-    <ProjectReference Include="..\HttpHybridCacheHandler.Abstractions\HttpHybridCacheHandler.Abstractions.csproj" />
+    <ProjectReference Include="..\HttpHybridCacheHandler.ContentStore\HttpHybridCacheHandler.ContentStore.csproj" />
   </ItemGroup>
 </Project>

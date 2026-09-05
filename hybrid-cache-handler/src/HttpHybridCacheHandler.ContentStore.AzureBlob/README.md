@@ -2,7 +2,7 @@
 
 `DamianH.HttpHybridCacheHandler.ContentStore.AzureBlob` targets .NET 10 and uses the
 official `Azure.Storage.Blobs` SDK (12.29.2). It depends on the independent
-Abstractions package, not the HTTP handler or HybridCache. Release tags use
+ContentStore package, not the HTTP handler or HybridCache. Release tags use
 `cache-azureblob-v`. NativeAOT/trimming compatibility has **not** been validated.
 
 ## Registration

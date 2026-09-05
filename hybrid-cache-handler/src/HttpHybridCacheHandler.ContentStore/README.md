@@ -1,6 +1,7 @@
-# HTTP cache content-store abstractions
+# HTTP cache content-store contracts
 
-Provider-independent contracts for `DamianH.HttpHybridCacheHandler` and its content-store adapters.
+`DamianH.HttpHybridCacheHandler.ContentStore` provides provider-independent contracts for
+`DamianH.HttpHybridCacheHandler` and its content-store adapters.
 No cloud SDK or HybridCache dependency is required to implement a store.
 
 `IHttpCacheContentStore` provides complete streaming writes, independently owned read streams,
@@ -14,4 +15,4 @@ programming errors are not converted. This lets the handler log and abandon a fa
 cache fill without depending on cloud SDK exception types or corrupting the origin
 response. Missing read results alone return null; other read failures propagate.
 
-This package is versioned independently using `cache-abstractions-v` tags.
+This package is versioned independently using `cache-contentstore-v` tags.

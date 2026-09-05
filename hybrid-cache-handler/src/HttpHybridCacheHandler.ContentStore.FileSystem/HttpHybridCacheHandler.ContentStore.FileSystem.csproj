@@ -21,7 +21,7 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.10" />
-    <ProjectReference Include="..\HttpHybridCacheHandler.Abstractions\HttpHybridCacheHandler.Abstractions.csproj" />
+    <ProjectReference Include="..\HttpHybridCacheHandler.ContentStore\HttpHybridCacheHandler.ContentStore.csproj" />
     <InternalsVisibleTo Include="HttpHybridCacheHandler.ContentStore.FileSystem.Tests" />
   </ItemGroup>
 </Project>
