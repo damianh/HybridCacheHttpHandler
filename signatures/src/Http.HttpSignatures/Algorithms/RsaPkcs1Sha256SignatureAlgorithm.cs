@@ -16,6 +16,20 @@ public sealed class RsaPkcs1Sha256SignatureAlgorithm : ISignatureAlgorithm
     public string AlgorithmName => "rsa-v1_5-sha256";
 
     /// <inheritdoc/>
+    public bool IsCompatible(SigningKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return key is RsaSigningKey;
+    }
+
+    /// <inheritdoc/>
+    public bool IsCompatible(VerificationKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return key is RsaVerificationKey;
+    }
+
+    /// <inheritdoc/>
     public byte[] Sign(ReadOnlySpan<byte> signatureBase, SigningKey key)
     {
         ArgumentNullException.ThrowIfNull(key);

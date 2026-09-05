@@ -3,6 +3,8 @@
 
 namespace DamianH.Http.HttpSignatures.Algorithms;
 
+using DamianH.Http.HttpSignatures.Keys;
+
 /// <summary>
 /// Ed25519 signature algorithm per RFC 9421 §3.3.6.
 /// .NET does not currently provide built-in Ed25519 support.
@@ -14,6 +16,20 @@ public sealed class Ed25519SignatureAlgorithm : ISignatureAlgorithm
 {
     /// <inheritdoc/>
     public string AlgorithmName => "ed25519";
+
+    /// <inheritdoc/>
+    public bool IsCompatible(SigningKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return key is Ed25519SigningKey;
+    }
+
+    /// <inheritdoc/>
+    public bool IsCompatible(VerificationKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return key is Ed25519VerificationKey;
+    }
 
     /// <inheritdoc/>
     public byte[] Sign(ReadOnlySpan<byte> signatureBase, SigningKey key) =>

@@ -12,6 +12,9 @@ internal sealed class TestHttpMessageContext : IHttpMessageContext
     private readonly Dictionary<string, List<string>> _headers =
         new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly Dictionary<string, List<string>> _trailers =
+        new(StringComparer.OrdinalIgnoreCase);
+
     /// <inheritdoc/>
     public bool IsRequest { get; set; } = true;
 
@@ -63,20 +66,39 @@ internal sealed class TestHttpMessageContext : IHttpMessageContext
         _headers[name] = [value];
     }
 
-    /// <inheritdoc/>
-    public string? GetHeaderValue(string fieldName)
+    /// <summary>
+    /// Adds a trailer value. Multiple calls with the same name add multiple values.
+    /// </summary>
+    public void AddTrailer(string name, string value)
     {
-        if (!_headers.TryGetValue(fieldName, out var values) || values.Count == 0)
-            return null;
+        if (!_trailers.TryGetValue(name, out var values))
+        {
+            values = [];
+            _trailers[name] = values;
+        }
+        values.Add(value);
+    }
 
-        // RFC 9110 §5.2: combine multiple values with ", "
-        return string.Join(", ", values);
+    /// <summary>
+    /// Sets a trailer to a single value, replacing any existing values.
+    /// </summary>
+    public void SetTrailer(string name, string value)
+    {
+        _trailers[name] = [value];
     }
 
     /// <inheritdoc/>
     public IReadOnlyList<string> GetHeaderValues(string fieldName)
     {
         if (!_headers.TryGetValue(fieldName, out var values))
+            return [];
+        return values.AsReadOnly();
+    }
+
+    /// <inheritdoc/>
+    public IReadOnlyList<string> GetTrailerValues(string fieldName)
+    {
+        if (!_trailers.TryGetValue(fieldName, out var values))
             return [];
         return values.AsReadOnly();
     }

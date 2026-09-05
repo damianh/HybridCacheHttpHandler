@@ -20,7 +20,7 @@ public sealed class EcdsaP384Sha384Tests
     private static EcdsaSigningKey CreateP384SigningKey()
     {
         var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP384);
-        return new EcdsaSigningKey("test-key-p384", ecdsa, "ecdsa-p384-sha384");
+        return new EcdsaSigningKey("test-key-p384", ecdsa);
     }
 
     private static EcdsaVerificationKey CreateP384VerificationKey(ECDsa ecdsa)
@@ -28,7 +28,7 @@ public sealed class EcdsaP384Sha384Tests
         // Export/import public key only
         var pub = ECDsa.Create();
         pub.ImportSubjectPublicKeyInfo(ecdsa.ExportSubjectPublicKeyInfo(), out _);
-        return new EcdsaVerificationKey("test-key-p384", pub, "ecdsa-p384-sha384");
+        return new EcdsaVerificationKey("test-key-p384", pub);
     }
 
     [Fact]

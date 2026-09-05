@@ -9,6 +9,19 @@ namespace DamianH.Http.HttpSignatures;
 public class SignatureParametersTests
 {
     [Fact]
+    public void Constructor_DoesNotExposeMutableCoveredComponentStorage()
+    {
+        var source = new List<ComponentIdentifier> { ComponentIdentifier.Method };
+        var parameters = new SignatureParameters(source);
+
+        source[0] = ComponentIdentifier.Path;
+
+        parameters.CoveredComponents[0].ShouldBe(ComponentIdentifier.Method);
+        parameters.CoveredComponents.ShouldNotBeOfType<ComponentIdentifier[]>();
+        parameters.CoveredComponents.ShouldNotBeOfType<List<ComponentIdentifier>>();
+    }
+
+    [Fact]
     public void Serialize_EmptyCoveredComponents_SerializesEmptyInnerList()
     {
         var sp = new SignatureParameters([]);

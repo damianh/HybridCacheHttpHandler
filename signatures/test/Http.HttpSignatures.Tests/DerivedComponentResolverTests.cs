@@ -24,11 +24,21 @@ public sealed class DerivedComponentResolverTests
 
     // @method
     [Fact]
-    public void Resolve_Method_ReturnsUppercaseMethod()
+    public void Resolve_Method_PreservesUppercaseMethod()
     {
-        var ctx = BuildRequest(method: "post");
+        var ctx = BuildRequest(method: "POST");
         var result = DerivedComponentResolver.Resolve(ComponentIdentifier.Method, ctx);
         result.ShouldBe("POST");
+    }
+
+    [Fact]
+    public void Resolve_Method_PreservesOriginalCaseWithoutTransformation()
+    {
+        // RFC 9421 §2.2.1: the method name is case sensitive; no transformation is performed
+        // on the input method value's case, even though conventional method names are uppercase.
+        var ctx = BuildRequest(method: "PoSt");
+        var result = DerivedComponentResolver.Resolve(ComponentIdentifier.Method, ctx);
+        result.ShouldBe("PoSt");
     }
 
     [Fact]
@@ -165,6 +175,56 @@ public sealed class DerivedComponentResolverTests
     {
         var ctx = BuildRequest();
         var id = ComponentIdentifier.QueryParam("x");
+        Should.Throw<SignatureBaseException>(
+            () => DerivedComponentResolver.Resolve(id, ctx));
+    }
+
+    // RFC 9421 §2.2.8 worked example: percent-decode/re-encode round-trips to the same value.
+    [Fact]
+    public void Resolve_QueryParam_MultilinePercentEncodedValue_RoundTripsUnchanged()
+    {
+        var ctx = BuildRequest(query: "?var=this%20is%20a%20big%0Amultiline%20value");
+        var id = ComponentIdentifier.QueryParam("var");
+        var result = DerivedComponentResolver.Resolve(id, ctx);
+        result.ShouldBe("this%20is%20a%20big%0Amultiline%20value");
+    }
+
+    // RFC 9421 §2.2.8 worked example: '+' decodes to space, which re-encodes as %20, not '+'.
+    [Fact]
+    public void Resolve_QueryParam_PlusSignValue_ReEncodesAsPercent20()
+    {
+        var ctx = BuildRequest(query: "?bar=with+plus+whitespace");
+        var id = ComponentIdentifier.QueryParam("bar");
+        var result = DerivedComponentResolver.Resolve(id, ctx);
+        result.ShouldBe("with%20plus%20whitespace");
+    }
+
+    // RFC 9421 §2.2.8 worked example: a percent-encoded UTF-8 name round-trips unchanged, and its
+    // canonical form is what must be used in the component identifier's 'name' parameter.
+    [Fact]
+    public void Resolve_QueryParam_PercentEncodedUnicodeName_MatchesCanonicalForm()
+    {
+        var ctx = BuildRequest(query: "?fa%C3%A7ade%22%3A%20=something");
+        var id = ComponentIdentifier.QueryParam("fa%C3%A7ade%22%3A%20");
+        var result = DerivedComponentResolver.Resolve(id, ctx);
+        result.ShouldBe("something");
+    }
+
+    [Fact]
+    public void Resolve_QueryParam_EmptyValue_ReturnsEmptyString()
+    {
+        var ctx = BuildRequest(query: "?flag=&other=x");
+        var id = ComponentIdentifier.QueryParam("flag");
+        var result = DerivedComponentResolver.Resolve(id, ctx);
+        result.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public void Resolve_QueryParam_DuplicateNamePostCanonicalization_Throws()
+    {
+        // "a" and "%61" both canonicalize to "a" — ambiguous, must not be silently resolved.
+        var ctx = BuildRequest(query: "?a=1&%61=2");
+        var id = ComponentIdentifier.QueryParam("a");
         Should.Throw<SignatureBaseException>(
             () => DerivedComponentResolver.Resolve(id, ctx));
     }

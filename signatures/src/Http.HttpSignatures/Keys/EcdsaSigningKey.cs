@@ -15,20 +15,16 @@ public sealed class EcdsaSigningKey : SigningKey
     /// </summary>
     /// <param name="keyId">The key identifier.</param>
     /// <param name="ecdsa">The ECDsa key (must contain the private key).</param>
-    /// <param name="algorithmHint">Optional algorithm hint.</param>
-    public EcdsaSigningKey(string keyId, ECDsa ecdsa, string? algorithmHint = null)
+    public EcdsaSigningKey(string keyId, ECDsa ecdsa)
         : base(keyId)
     {
         ArgumentNullException.ThrowIfNull(ecdsa);
         Ecdsa = ecdsa;
-        AlgorithmHint = algorithmHint;
     }
 
     /// <summary>Gets the ECDsa key.</summary>
     public ECDsa Ecdsa { get; }
 
-    /// <inheritdoc/>
-    public override string? AlgorithmHint { get; }
 }
 
 /// <summary>
@@ -41,18 +37,14 @@ public sealed class EcdsaVerificationKey : VerificationKey
     /// </summary>
     /// <param name="keyId">The key identifier.</param>
     /// <param name="ecdsa">The ECDsa key (public key only is sufficient).</param>
-    /// <param name="algorithmHint">Optional algorithm hint.</param>
-    public EcdsaVerificationKey(string keyId, ECDsa ecdsa, string? algorithmHint = null)
+    public EcdsaVerificationKey(string keyId, ECDsa ecdsa)
         : base(keyId)
     {
         ArgumentNullException.ThrowIfNull(ecdsa);
         Ecdsa = ecdsa;
-        AlgorithmHint = algorithmHint;
     }
 
     /// <summary>Gets the ECDsa key.</summary>
     public ECDsa Ecdsa { get; }
 
-    /// <inheritdoc/>
-    public override string? AlgorithmHint { get; }
 }

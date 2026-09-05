@@ -21,14 +21,11 @@ public sealed class HmacSharedKey : SigningKey
         : base(keyId)
     {
         ArgumentNullException.ThrowIfNull(keyBytes);
-        _keyBytes = keyBytes;
+        _keyBytes = (byte[])keyBytes.Clone();
     }
 
-    /// <summary>Gets the shared secret key bytes.</summary>
-    public byte[] KeyBytes => _keyBytes;
-
-    /// <inheritdoc/>
-    public override string? AlgorithmHint => "hmac-sha256";
+    /// <summary>Gets read-only access to the shared secret key bytes.</summary>
+    public ReadOnlySpan<byte> KeyBytes => _keyBytes;
 
     /// <summary>
     /// Gets this key as a <see cref="VerificationKey"/>.
@@ -52,12 +49,9 @@ public sealed class HmacSharedVerificationKey : VerificationKey
         : base(keyId)
     {
         ArgumentNullException.ThrowIfNull(keyBytes);
-        _keyBytes = keyBytes;
+        _keyBytes = (byte[])keyBytes.Clone();
     }
 
-    /// <summary>Gets the shared secret key bytes.</summary>
-    public byte[] KeyBytes => _keyBytes;
-
-    /// <inheritdoc/>
-    public override string? AlgorithmHint => "hmac-sha256";
+    /// <summary>Gets read-only access to the shared secret key bytes.</summary>
+    public ReadOnlySpan<byte> KeyBytes => _keyBytes;
 }

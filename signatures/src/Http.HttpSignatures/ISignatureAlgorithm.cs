@@ -16,6 +16,20 @@ public interface ISignatureAlgorithm
     string AlgorithmName { get; }
 
     /// <summary>
+    /// Determines whether this algorithm can use the supplied signing key.
+    /// </summary>
+    /// <param name="key">The signing key to inspect.</param>
+    /// <returns><see langword="true"/> when the key is compatible.</returns>
+    bool IsCompatible(SigningKey key);
+
+    /// <summary>
+    /// Determines whether this algorithm can use the supplied verification key.
+    /// </summary>
+    /// <param name="key">The verification key to inspect.</param>
+    /// <returns><see langword="true"/> when the key is compatible.</returns>
+    bool IsCompatible(VerificationKey key);
+
+    /// <summary>
     /// Signs the signature base, producing the signature bytes.
     /// Implements the <c>HTTP_SIGN(M, Ks) → S</c> primitive from RFC 9421 §3.3.
     /// </summary>

@@ -14,17 +14,33 @@ namespace DamianH.Http.HttpSignatures.Algorithms;
 /// </summary>
 public sealed class EcdsaP384Sha384SignatureAlgorithm : ISignatureAlgorithm
 {
+    private const string P384Oid = "1.3.132.0.34";
+
     /// <inheritdoc/>
     public string AlgorithmName => "ecdsa-p384-sha384";
+
+    /// <inheritdoc/>
+    public bool IsCompatible(SigningKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return EcdsaKeyCompatibility.IsSigningKey(key, P384Oid);
+    }
+
+    /// <inheritdoc/>
+    public bool IsCompatible(VerificationKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return EcdsaKeyCompatibility.IsVerificationKey(key, P384Oid);
+    }
 
     /// <inheritdoc/>
     public byte[] Sign(ReadOnlySpan<byte> signatureBase, SigningKey key)
     {
         ArgumentNullException.ThrowIfNull(key);
 
-        if (key is not EcdsaSigningKey ecdsaKey)
+        if (!IsCompatible(key) || key is not EcdsaSigningKey ecdsaKey)
             throw new ArgumentException(
-                $"Expected {nameof(EcdsaSigningKey)} but received {key.GetType().Name}.", nameof(key));
+                $"Expected a P-384 {nameof(EcdsaSigningKey)} but received {key.GetType().Name}.", nameof(key));
 
         return ecdsaKey.Ecdsa.SignData(
             signatureBase,
@@ -37,9 +53,12 @@ public sealed class EcdsaP384Sha384SignatureAlgorithm : ISignatureAlgorithm
     {
         ArgumentNullException.ThrowIfNull(key);
 
-        if (key is not EcdsaVerificationKey ecdsaKey)
+        if (!IsCompatible(key) || key is not EcdsaVerificationKey ecdsaKey)
             throw new ArgumentException(
-                $"Expected {nameof(EcdsaVerificationKey)} but received {key.GetType().Name}.", nameof(key));
+                $"Expected a P-384 {nameof(EcdsaVerificationKey)} but received {key.GetType().Name}.", nameof(key));
+
+        if (signature.Length != 96)
+            return false;
 
         return ecdsaKey.Ecdsa.VerifyData(
             signatureBase,
