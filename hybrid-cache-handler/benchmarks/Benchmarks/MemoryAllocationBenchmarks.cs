@@ -4,116 +4,128 @@ using BenchmarkDotNet.Attributes;
 using DamianH.HttpHybridCacheHandler;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
-using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Benchmarks;
 
 /// <summary>
-/// Benchmarks focusing on memory allocation patterns and LOH behavior
-/// with content/metadata separation architecture.
+/// Memory allocation patterns across response sizes for cache miss (store),
+/// cache hit, and concurrent cache hits. Hit entries are primed in
+/// GlobalSetup and verified, so measured methods contain only the operation
+/// under test. Responses are drained to Stream.Null (no string conversion).
 /// </summary>
 [MemoryDiagnoser]
 public class MemoryAllocationBenchmarks
 {
-    private HttpClient _cachedClient = null!;
-    private FakeHttpMessageHandler _fakeHandler = null!;
     private const string TestUrl = "https://example.com/api/data";
+
+    private ServiceProvider _serviceProvider = null!;
+    private HttpClient _cachedClient = null!;
+    private SizedFakeHandler _fakeHandler = null!;
+    private string _hitUrl = null!;
+    private string _missUrl = null!;
 
     [Params(1024, 10 * 1024, 50 * 1024, 100 * 1024, 500 * 1024, 1024 * 1024)]
     public int ResponseSize { get; set; }
 
     [GlobalSetup]
-    public void Setup()
+    public async Task Setup()
     {
-        _fakeHandler = new FakeHttpMessageHandler();
+        _fakeHandler = new SizedFakeHandler();
 
         var services = new ServiceCollection();
         services.AddHybridCache();
-        var serviceProvider = services.BuildServiceProvider();
+        _serviceProvider = services.BuildServiceProvider();
 
         var cacheHandler = new HttpHybridCacheHandler(
             _fakeHandler,
-            serviceProvider.GetRequiredService<HybridCache>(),
+            _serviceProvider.GetRequiredService<HybridCache>(),
             TimeProvider.System,
             new HttpHybridCacheHandlerOptions
             {
-                // Enable compression to test LOH mitigation
                 CompressionThreshold = 1024,
-                MaxCacheableContentSize = 2 * 1024 * 1024 // 2MB
+                MaxCacheableContentSize = 2 * 1024 * 1024, // 2MB
             },
             NullLogger<HttpHybridCacheHandler>.Instance);
 
         _cachedClient = new HttpClient(cacheHandler);
+
+        // Prime the hit entry and verify subsequent requests are served from cache.
+        _hitUrl = $"{TestUrl}?size={ResponseSize}&key=hit";
+        _missUrl = $"{TestUrl}?size={ResponseSize}&key=miss";
+        await CacheHit();
+        _fakeHandler.ResetCounter();
+        await CacheHit();
+        if (_fakeHandler.RequestCount != 0)
+        {
+            throw new InvalidOperationException("Priming failed: subsequent requests were not served from cache.");
+        }
+    }
+
+    // Iteration setup makes BDN use one invocation per iteration for this target.
+    [IterationSetup(Target = nameof(CacheMiss_InitialStore))]
+    public void ResetCacheForMiss()
+    {
+        Cleanup();
+        Setup().GetAwaiter().GetResult();
+    }
+
+    [IterationCleanup(Target = nameof(CacheMiss_InitialStore))]
+    public void VerifyCacheMiss()
+    {
+        if (_fakeHandler.RequestCount != 1)
+        {
+            throw new InvalidOperationException("Expected exactly one origin request per miss iteration.");
+        }
+
+        VerifyStoredResponseAsync().GetAwaiter().GetResult();
+    }
+
+    private async Task VerifyStoredResponseAsync()
+    {
+        await CacheMiss_InitialStore();
+        if (_fakeHandler.RequestCount != 1)
+        {
+            throw new InvalidOperationException("The cache miss did not store a reusable response.");
+        }
     }
 
     [Benchmark(Description = "Cache Miss - Initial Store")]
-    public async Task<string> CacheMiss_InitialStore()
+    public async Task CacheMiss_InitialStore()
     {
-        // Clear cache state between iterations
-        _fakeHandler.ResetCounter();
-        
-        var response = await _cachedClient.GetAsync($"{TestUrl}?size={ResponseSize}&key={Guid.NewGuid()}");
-        return await response.Content.ReadAsStringAsync();
+        var response = await _cachedClient.GetAsync(_missUrl, HttpCompletionOption.ResponseHeadersRead);
+        await response.DrainAsync();
     }
 
-    [Benchmark(Description = "Cache Hit - Retrieve from Cache")]
-    public async Task<string> CacheHit_RetrieveFromCache()
+    [Benchmark(Description = "Cache Hit")]
+    public async Task CacheHit()
     {
-        // Prime cache once
-        var key = $"cache-hit-{ResponseSize}";
-        await _cachedClient.GetAsync($"{TestUrl}?size={ResponseSize}&key={key}");
-        
-        // Measure retrieval
-        var response = await _cachedClient.GetAsync($"{TestUrl}?size={ResponseSize}&key={key}");
-        return await response.Content.ReadAsStringAsync();
+        var response = await _cachedClient.GetAsync(_hitUrl, HttpCompletionOption.ResponseHeadersRead);
+        await response.DrainAsync();
     }
 
-    [Benchmark(Description = "Cache Hit - Multiple Retrievals")]
-    public async Task MultipleRetrievals_SameContent()
+    [Benchmark(Description = "Cache Hit - 5 Concurrent")]
+    public async Task CacheHit_5Concurrent()
     {
-        // Prime cache once
-        var key = $"multi-hit-{ResponseSize}";
-        await _cachedClient.GetAsync($"{TestUrl}?size={ResponseSize}&key={key}");
-        
-        // Measure multiple retrievals (tests content deduplication)
-        var tasks = Enumerable.Range(0, 5)
-            .Select(_ => _cachedClient.GetAsync($"{TestUrl}?size={ResponseSize}&key={key}"))
-            .ToArray();
+        var tasks = new Task[5];
+        for (var i = 0; i < tasks.Length; i++)
+        {
+            tasks[i] = Task.Run(GetAndDrainAsync);
+        }
+
         await Task.WhenAll(tasks);
+
+        async Task GetAndDrainAsync()
+        {
+            var response = await _cachedClient.GetAsync(_hitUrl, HttpCompletionOption.ResponseHeadersRead);
+            await response.DrainAsync();
+        }
     }
 
     [GlobalCleanup]
     public void Cleanup()
-        => _cachedClient.Dispose();
-
-    private class FakeHttpMessageHandler : HttpMessageHandler
     {
-        private int _requestCount;
-
-        public void ResetCounter() => _requestCount = 0;
-
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            Interlocked.Increment(ref _requestCount);
-
-            // Parse size from query string
-            var query = request.RequestUri?.Query ?? "";
-            var sizeMatch = System.Text.RegularExpressions.Regex.Match(query, @"size=(\d+)");
-            var size = sizeMatch.Success ? int.Parse(sizeMatch.Groups[1].Value) : 1024;
-
-            // Generate compressible content (repeating pattern)
-            var content = new string('x', size);
-
-            var response = new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(content),
-                Headers = { { "Cache-Control", "max-age=3600" } }
-            };
-
-            response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
-
-            return Task.FromResult(response);
-        }
+        _cachedClient.Dispose();
+        _serviceProvider.Dispose();
     }
 }

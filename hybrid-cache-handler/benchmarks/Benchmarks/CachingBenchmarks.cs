@@ -4,90 +4,141 @@ using BenchmarkDotNet.Attributes;
 using DamianH.HttpHybridCacheHandler;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
-using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Benchmarks;
 
+/// <summary>
+/// Handler overhead benchmarks for small responses. The baseline is a request
+/// straight through the fake inner handler; the other benchmarks isolate the
+/// cache handler's hit, miss, concurrency, and Vary-key costs.
+/// Cache priming happens in GlobalSetup so measured methods contain only the
+/// operation under test.
+/// </summary>
 [MemoryDiagnoser]
 public class CachingBenchmarks
 {
+    private const string TestUrl = "https://example.com/api/data";
+    private const string HitUrl = $"{TestUrl}?size=1024&key=hit";
+    private const string MissUrl = $"{TestUrl}?size=1024&key=miss";
+
+    private ServiceProvider _serviceProvider = null!;
     private HttpClient _cachedClient = null!;
     private HttpClient _uncachedClient = null!;
-    private FakeHttpMessageHandler _fakeHandler = null!;
-    private const string TestUrl = "https://example.com/api/data";
+    private SizedFakeHandler _fakeHandler = null!;
 
     [GlobalSetup]
-    public void Setup()
+    public async Task Setup()
     {
-        _fakeHandler = new FakeHttpMessageHandler();
+        _fakeHandler = new SizedFakeHandler();
 
         var services = new ServiceCollection();
         services.AddHybridCache();
-        var serviceProvider = services.BuildServiceProvider();
+        _serviceProvider = services.BuildServiceProvider();
 
         var cacheHandler = new HttpHybridCacheHandler(
             _fakeHandler,
-            serviceProvider.GetRequiredService<HybridCache>(),
+            _serviceProvider.GetRequiredService<HybridCache>(),
             TimeProvider.System,
             new HttpHybridCacheHandlerOptions(),
             NullLogger<HttpHybridCacheHandler>.Instance);
 
         _cachedClient = new HttpClient(cacheHandler);
-        _uncachedClient = new HttpClient(_fakeHandler);
+        _uncachedClient = new HttpClient(_fakeHandler, disposeHandler: false);
+
+        // Prime the hit and vary-header entries, then verify hits are real.
+        await CacheHit();
+        await CacheHit_VaryHeader();
+        _fakeHandler.ResetCounter();
+
+        await CacheHit();
+        await CacheHit_VaryHeader();
+        if (_fakeHandler.RequestCount != 0)
+        {
+            throw new InvalidOperationException("Priming failed: subsequent requests were not served from cache.");
+        }
     }
 
     [Benchmark(Baseline = true)]
-    public async Task<string> UncachedRequest()
+    public async Task UncachedRequest()
     {
-        var response = await _uncachedClient.GetAsync(TestUrl);
-        return await response.Content.ReadAsStringAsync();
+        var response = await _uncachedClient.GetAsync(HitUrl, HttpCompletionOption.ResponseHeadersRead);
+        await response.DrainAsync();
     }
 
     [Benchmark]
-    public async Task<string> CachedRequest_FirstHit()
+    public async Task CacheHit()
     {
-        _fakeHandler.ResetCounter();
-        var response = await _cachedClient.GetAsync(TestUrl);
-        return await response.Content.ReadAsStringAsync();
+        var response = await _cachedClient.GetAsync(HitUrl, HttpCompletionOption.ResponseHeadersRead);
+        await response.DrainAsync();
+    }
+
+    // Iteration setup makes BDN use one invocation per iteration for this target.
+    [IterationSetup(Target = nameof(CacheMiss_Store))]
+    public void ResetCacheForMiss()
+    {
+        Cleanup();
+        Setup().GetAwaiter().GetResult();
+    }
+
+    [IterationCleanup(Target = nameof(CacheMiss_Store))]
+    public void VerifyCacheMiss()
+    {
+        if (_fakeHandler.RequestCount != 1)
+        {
+            throw new InvalidOperationException("Expected exactly one origin request per miss iteration.");
+        }
+
+        VerifyStoredResponseAsync().GetAwaiter().GetResult();
+    }
+
+    private async Task VerifyStoredResponseAsync()
+    {
+        await CacheMiss_Store();
+        if (_fakeHandler.RequestCount != 1)
+        {
+            throw new InvalidOperationException("The cache miss did not store a reusable response.");
+        }
     }
 
     [Benchmark]
-    public async Task<string> CachedRequest_CacheHit()
+    public async Task CacheMiss_Store()
     {
-        // Prime cache
-        await _cachedClient.GetAsync(TestUrl);
-        _fakeHandler.ResetCounter();
-
-        // Measure cached hit
-        var response = await _cachedClient.GetAsync(TestUrl);
-        return await response.Content.ReadAsStringAsync();
+        var response = await _cachedClient.GetAsync(MissUrl, HttpCompletionOption.ResponseHeadersRead);
+        await response.DrainAsync();
     }
 
     [Benchmark]
-    public async Task ConcurrentRequests_10Parallel()
+    public async Task CacheHit_10Concurrent()
     {
-        var tasks = Enumerable.Range(0, 10)
-            .Select(_ => _cachedClient.GetAsync(TestUrl + "?concurrent=true"))
-            .ToArray();
+        var tasks = new Task[10];
+        for (var i = 0; i < tasks.Length; i++)
+        {
+            tasks[i] = Task.Run(GetAndDrainAsync);
+        }
+
         await Task.WhenAll(tasks);
+
+        async Task GetAndDrainAsync()
+        {
+            var response = await _cachedClient.GetAsync(HitUrl, HttpCompletionOption.ResponseHeadersRead);
+            await response.DrainAsync();
+        }
     }
 
     [Benchmark]
-    public async Task<string> LargeResponse_10KB()
+    public async Task CacheHit_VaryHeader()
     {
-        var response = await _cachedClient.GetAsync(TestUrl + "?size=large");
-        return await response.Content.ReadAsStringAsync();
+        using var request = CreateVaryRequest();
+        var response = await _cachedClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        await response.DrainAsync();
     }
 
-    [Benchmark]
-    public async Task<string> VaryHeader_KeyGeneration()
+    private static HttpRequestMessage CreateVaryRequest()
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, TestUrl);
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{TestUrl}?size=1024&key=vary");
         request.Headers.Add("Accept-Language", "en-US");
-        request.Headers.Add("Accept-Encoding", "gzip, deflate");
-        var response = await _cachedClient.SendAsync(request);
-        return await response.Content.ReadAsStringAsync();
+        return request;
     }
 
     [GlobalCleanup]
@@ -95,34 +146,6 @@ public class CachingBenchmarks
     {
         _cachedClient.Dispose();
         _uncachedClient.Dispose();
-    }
-
-    private class FakeHttpMessageHandler : HttpMessageHandler
-    {
-        private int _requestCount;
-
-        public void ResetCounter() => _requestCount = 0;
-
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            Interlocked.Increment(ref _requestCount);
-
-            var content = request.RequestUri?.Query.Contains("size=large") == true
-                ? new string('x', 10 * 1024) // 10KB
-                : $"Response #{_requestCount}";
-
-            var response = new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(content),
-                Headers = { { "Cache-Control", "max-age=3600" } }
-            };
-
-            if (request.Headers.Contains("Accept-Language"))
-            {
-                response.Headers.Add("Vary", "Accept-Language, Accept-Encoding");
-            }
-
-            return Task.FromResult(response);
-        }
+        _serviceProvider.Dispose();
     }
 }
