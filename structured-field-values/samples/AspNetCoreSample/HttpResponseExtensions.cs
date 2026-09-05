@@ -21,7 +21,7 @@ public static class HttpResponseExtensions
             string headerName,
             StructuredFieldMapper<T> mapper,
             T value)
-            where T : new()
+            where T : class, new()
         {
             var serialized = mapper.Serialize(value);
             response.Headers[headerName] = serialized;

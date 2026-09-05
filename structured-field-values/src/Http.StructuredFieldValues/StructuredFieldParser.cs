@@ -5,597 +5,378 @@ using System.Text;
 
 namespace DamianH.Http.StructuredFieldValues;
 
-/// <summary>
-/// Parses structured field values according to RFC 8941.
-/// </summary>
+/// <summary>Parses structured fields according to RFC 9651 (including RFC 8941 types).</summary>
+/// <remarks>
+/// Null input is programmer misuse and throws <see cref="ArgumentNullException"/>.
+/// Invalid wire input throws <see cref="StructuredFieldParseException"/> with a position.
+/// </remarks>
 public static class StructuredFieldParser
 {
-    /// <summary>
-    /// Parses an item from the input string.
-    /// RFC 8941 § 4.2.3
-    /// </summary>
-    /// <param name="input">The input string containing the item.</param>
-    /// <returns>The parsed structured field item.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when input is null.</exception>
-    /// <exception cref="StructuredFieldParseException">Thrown when parsing fails.</exception>
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+
+    /// <summary>Parses a complete bare value, without parameters.</summary>
+    public static BareItem ParseBareItem(string input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        var parser = new Parser(input.AsSpan());
+        parser.ConsumeOptionalSpaces();
+        var value = ParseBareItem(ref parser);
+        RequireEnd(ref parser);
+        return value;
+    }
+
+    /// <summary>Parses a complete item with its owned parameters.</summary>
     public static StructuredFieldItem ParseItem(string input)
     {
         ArgumentNullException.ThrowIfNull(input);
-        
         var parser = new Parser(input.AsSpan());
         parser.ConsumeOptionalSpaces();
-        
-        var item = ParseBareItem(ref parser);
-        var parameters = ParseParameters(ref parser);
-        
-        parser.ConsumeOptionalSpaces();
-        
-        if (!parser.IsAtEnd)
-        {
-            parser.ThrowParseException("Unexpected characters after item");
-        }
-
-        item.Parameters.Clear();
-        foreach (var (key, value) in parameters)
-        {
-            item.Parameters.Add(key, value);
-        }
-        
+        var item = ParseItem(ref parser);
+        RequireEnd(ref parser);
         return item;
     }
 
-    /// <summary>
-    /// Parses a list from the input string.
-    /// RFC 8941 § 4.2.1
-    /// </summary>
-    /// <param name="input">The input string containing the list.</param>
-    /// <returns>The parsed structured field list.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when input is null.</exception>
-    /// <exception cref="StructuredFieldParseException">Thrown when parsing fails.</exception>
+    /// <summary>Parses a complete list. Empty input represents an empty list.</summary>
     public static StructuredFieldList ParseList(string input)
     {
         ArgumentNullException.ThrowIfNull(input);
-        
         var parser = new Parser(input.AsSpan());
         var list = new StructuredFieldList();
-        
-        parser.ConsumeOptionalWhitespace();
-        
-        if (parser.IsAtEnd)
+        parser.ConsumeOptionalSpaces();
+        while (!parser.IsAtEnd)
         {
-            return list;
-        }
-
-        while (true)
-        {
-            var member = ParseListMember(ref parser);
-            list.Add(member);
-            
-            parser.ConsumeOptionalWhitespace();
-            
-            if (parser.IsAtEnd)
+            list.Add(ParseMember(ref parser));
+            if (!ConsumeSeparator(ref parser))
             {
                 break;
             }
-            
-            if (!parser.TryConsume(','))
-            {
-                parser.ThrowParseException("Expected ',' between list members");
-            }
-            
-            parser.ConsumeOptionalWhitespace();
-            
-            if (parser.IsAtEnd)
-            {
-                parser.ThrowParseException("Unexpected end of input after ','");
-            }
         }
-        
         return list;
     }
 
     /// <summary>
-    /// Parses a dictionary from the input string.
-    /// RFC 8941 § 4.2.2
+    /// Parses a complete dictionary. Duplicate keys replace values in their original position.
+    /// Empty input represents an empty dictionary.
     /// </summary>
-    /// <param name="input">The input string containing the dictionary.</param>
-    /// <returns>The parsed structured field dictionary.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when input is null.</exception>
-    /// <exception cref="StructuredFieldParseException">Thrown when parsing fails.</exception>
     public static StructuredFieldDictionary ParseDictionary(string input)
     {
         ArgumentNullException.ThrowIfNull(input);
-        
         var parser = new Parser(input.AsSpan());
-        var dict = new StructuredFieldDictionary();
-        
-        parser.ConsumeOptionalWhitespace();
-        
-        if (parser.IsAtEnd)
-        {
-            return dict;
-        }
-
-        while (true)
+        var dictionary = new StructuredFieldDictionary();
+        parser.ConsumeOptionalSpaces();
+        while (!parser.IsAtEnd)
         {
             var key = ParseKey(ref parser);
-            
-            DictionaryMember member;
-            
-            if (parser.TryConsume('='))
-            {
-                var listMember = ParseListMember(ref parser);
-
-                member = listMember.IsItem
-                    ? DictionaryMember.FromItem(listMember.Item)
-                    : DictionaryMember.FromInnerList(listMember.InnerList);
-            }
-            else
-            {
-                // Boolean true with parameters
-                var parameters = ParseParameters(ref parser);
-                var item = new BooleanItem(true);
-                foreach (var (paramKey, paramValue) in parameters)
-                {
-                    item.Parameters.Add(paramKey, paramValue);
-                }
-                member = DictionaryMember.FromItem(item);
-            }
-            
-            // Use indexer instead of Add to allow duplicate keys (last one wins per RFC 8941)
-            dict[key] = member;
-            
-            parser.ConsumeOptionalWhitespace();
-            
-            if (parser.IsAtEnd)
+            dictionary[key] = parser.TryConsume('=')
+                ? ParseMember(ref parser)
+                : StructuredFieldMember.FromItem(new StructuredFieldItem(BooleanItem.True, ParseParameters(ref parser)));
+            if (!ConsumeSeparator(ref parser))
             {
                 break;
             }
-            
-            if (!parser.TryConsume(','))
-            {
-                parser.ThrowParseException("Expected ',' between dictionary members");
-            }
-            
-            parser.ConsumeOptionalWhitespace();
-            
-            if (parser.IsAtEnd)
-            {
-                parser.ThrowParseException("Unexpected end of input after ','");
-            }
         }
-        
-        return dict;
+        return dictionary;
     }
 
-    /// <summary>
-    /// Parses a list member (item or inner list).
-    /// RFC 8941 § 4.2.1.1
-    /// </summary>
-    private static ListMember ParseListMember(ref Parser parser)
+    private static void RequireEnd(ref Parser parser)
     {
-        if (parser.Current == '(')
+        parser.ConsumeOptionalSpaces();
+        if (!parser.IsAtEnd)
         {
-            return ListMember.FromInnerList(ParseInnerList(ref parser));
-        }
-        else
-        {
-            var item = ParseBareItem(ref parser);
-            var parameters = ParseParameters(ref parser);
-            
-            item.Parameters.Clear();
-            foreach (var (key, value) in parameters)
-            {
-                item.Parameters.Add(key, value);
-            }
-            
-            return ListMember.FromItem(item);
+            parser.ThrowParseException("Unexpected characters after item");
         }
     }
 
-    /// <summary>
-    /// Parses an inner list.
-    /// RFC 8941 § 4.2.1.2
-    /// </summary>
+    private static bool ConsumeSeparator(ref Parser parser)
+    {
+        parser.ConsumeOptionalWhitespace();
+        if (parser.IsAtEnd)
+        {
+            return false;
+        }
+        if (!parser.TryConsume(','))
+        {
+            parser.ThrowParseException("Expected ',' between members");
+        }
+        parser.ConsumeOptionalWhitespace();
+        if (parser.IsAtEnd)
+        {
+            parser.ThrowParseException("Unexpected end of input after ','");
+        }
+        return true;
+    }
+
+    private static StructuredFieldMember ParseMember(ref Parser parser) =>
+        parser.Current == '('
+            ? StructuredFieldMember.FromInnerList(ParseInnerList(ref parser))
+            : StructuredFieldMember.FromItem(ParseItem(ref parser));
+
+    private static StructuredFieldItem ParseItem(ref Parser parser)
+    {
+        var value = ParseBareItem(ref parser);
+        return new StructuredFieldItem(value, ParseParameters(ref parser));
+    }
+
     private static InnerList ParseInnerList(ref Parser parser)
     {
-        if (!parser.TryConsume('('))
-        {
-            parser.ThrowParseException("Expected '(' at start of inner list");
-        }
-
+        parser.Advance();
         var items = new List<StructuredFieldItem>();
-        
         while (true)
         {
-            parser.ConsumeOptionalWhitespace();
-            
-            if (parser.Current == ')')
+            parser.ConsumeOptionalSpaces();
+            if (parser.TryConsume(')'))
             {
-                break;
+                return new InnerList(items, ParseParameters(ref parser));
             }
-            
-            var item = ParseBareItem(ref parser);
-            var parameters = ParseParameters(ref parser);
-            
-            item.Parameters.Clear();
-            foreach (var (key, value) in parameters)
+            items.Add(ParseItem(ref parser));
+            if (parser.Current is not (' ' or ')'))
             {
-                item.Parameters.Add(key, value);
-            }
-            
-            items.Add(item);
-            
-            if (parser.Current != ' ' && parser.Current != ')' && parser.Current != '\t')
-            {
-                parser.ThrowParseException("Expected whitespace or ')' after inner list item");
+                parser.ThrowParseException("Expected SP or ')' after inner list item");
             }
         }
-        
-        if (!parser.TryConsume(')'))
-        {
-            parser.ThrowParseException("Expected ')' at end of inner list");
-        }
-
-        var innerList = new InnerList(items);
-        var listParameters = ParseParameters(ref parser);
-        
-        foreach (var (key, value) in listParameters)
-        {
-            innerList.Parameters.Add(key, value);
-        }
-        
-        return innerList;
     }
 
-    /// <summary>
-    /// Parses parameters.
-    /// RFC 8941 § 4.2.3.2
-    /// </summary>
     private static Parameters ParseParameters(ref Parser parser)
     {
         var parameters = new Parameters();
-        
-        while (parser.Current == ';')
+        while (parser.TryConsume(';'))
         {
-            parser.Advance(); // consume ';'
-            parser.ConsumeOptionalWhitespace();
-            
+            parser.ConsumeOptionalSpaces();
             var key = ParseKey(ref parser);
-            
-            StructuredFieldItem? value = null;
-            
-            if (parser.TryConsume('='))
-            {
-                value = ParseBareItem(ref parser);
-            }
-            
-            parameters.Add(key, value);
+            parameters[key] = parser.TryConsume('=') ? ParseBareItem(ref parser) : BooleanItem.True;
         }
-        
         return parameters;
     }
 
-    /// <summary>
-    /// Parses a bare item (without parameters).
-    /// RFC 8941 § 4.2.3.1
-    /// </summary>
-    private static StructuredFieldItem ParseBareItem(ref Parser parser)
+    private static BareItem ParseBareItem(ref Parser parser)
     {
-        if (parser.IsAtEnd)
-        {
-            parser.ThrowParseException("Unexpected end of input when parsing item");
-        }
-
-        // Integer or Decimal
         if (parser.IsDigit() || parser.Current == '-')
         {
             return ParseNumber(ref parser);
         }
-        
-        // String
-        if (parser.Current == '"')
-        {
-            return ParseString(ref parser);
-        }
-        
-        // Token
-        if (parser.IsAlpha() || parser.Current == '*')
+        if (TokenItem.IsTokenStart(parser.Current))
         {
             return ParseToken(ref parser);
         }
-        
-        // Byte Sequence
-        if (parser.Current == ':')
+        switch (parser.Current)
         {
-            return ParseByteSequence(ref parser);
+            case '"': return ParseString(ref parser);
+            case ':': return ParseByteSequence(ref parser);
+            case '?': return ParseBoolean(ref parser);
+            case '@':
+                parser.Advance();
+                var number = ParseNumber(ref parser);
+                if (number is not IntegerItem)
+                {
+                    parser.ThrowParseException("A date must contain integer Unix seconds");
+                }
+                return new DateItem(((IntegerItem)number).LongValue);
+            case '%': return ParseDisplayString(ref parser);
+            default:
+                parser.ThrowParseException("Expected a bare item");
+                return null!;
         }
-        
-        // Boolean
-        if (parser.Current == '?')
-        {
-            return ParseBoolean(ref parser);
-        }
-
-        parser.ThrowParseException($"Unexpected character '{parser.Current}' when parsing item");
-        return null!; // Never reached
     }
 
-    /// <summary>
-    /// Parses an integer or decimal.
-    /// RFC 8941 § 4.2.4 and § 4.2.5
-    /// </summary>
-    private static StructuredFieldItem ParseNumber(ref Parser parser)
+    private static BareItem ParseNumber(ref Parser parser)
     {
-        var startPos = parser.Position;
-        var isNegative = false;
-        
-        if (parser.Current == '-')
-        {
-            isNegative = true;
-            parser.Advance();
-        }
-
+        var negative = parser.TryConsume('-');
         if (!parser.IsDigit())
         {
-            parser.ThrowParseException("Expected digit after '-'");
+            parser.ThrowParseException("Expected a digit");
         }
-
-        var integerPart = 0L;
-        var digitCount = 0;
-        
+        long integer = 0;
+        var integerDigits = 0;
         while (parser.IsDigit())
         {
-            integerPart = integerPart * 10 + (parser.Current - '0');
-            digitCount++;
+            if (++integerDigits > 15)
+            {
+                parser.ThrowParseException("An integer has at most 15 digits");
+            }
+            integer = integer * 10 + parser.Current - '0';
             parser.Advance();
-            
-            if (digitCount > 15)
-            {
-                parser.ThrowParseException("Integer too large");
-            }
         }
-
-        // Check for decimal
-        if (parser.Current == '.')
+        if (!parser.TryConsume('.'))
         {
+            return new IntegerItem(negative ? -integer : integer);
+        }
+        if (integerDigits > DecimalItem.MaxIntegerDigits)
+        {
+            parser.ThrowParseException("A decimal has at most 12 integer digits");
+        }
+        if (!parser.IsDigit())
+        {
+            parser.ThrowParseException("Expected a digit after '.'");
+        }
+        var fractionDigits = 0;
+        var fraction = 0;
+        var divisor = 1m;
+        while (parser.IsDigit())
+        {
+            if (++fractionDigits > DecimalItem.MaxDecimalPlaces)
+            {
+                parser.ThrowParseException("A decimal has at most three fractional digits");
+            }
+            fraction = fraction * 10 + parser.Current - '0';
+            divisor *= 10;
             parser.Advance();
-            
-            if (!parser.IsDigit())
-            {
-                parser.ThrowParseException("Expected digit after '.'");
-            }
-
-            var decimalPart = 0L;
-            var decimalDigits = 0;
-            
-            while (parser.IsDigit())
-            {
-                decimalPart = decimalPart * 10 + (parser.Current - '0');
-                decimalDigits++;
-                parser.Advance();
-                
-                if (decimalDigits > 3)
-                {
-                    parser.ThrowParseException("Too many decimal places (maximum 3)");
-                }
-            }
-
-            // Construct decimal value
-            var divisor = (decimal)Math.Pow(10, decimalDigits);
-            var value = integerPart + (decimalPart / divisor);
-            
-            if (isNegative)
-            {
-                value = -value;
-            }
-
-            return new DecimalItem(value);
         }
-        else
-        {
-            // Integer
-            var value = isNegative ? -integerPart : integerPart;
-            
-            if (value is < IntegerItem.MinValue or > IntegerItem.MaxValue)
-            {
-                parser.ThrowParseException($"Integer value {value} out of range");
-            }
-
-            return new IntegerItem(value);
-        }
+        var value = integer + fraction / divisor;
+        return new DecimalItem(negative ? -value : value);
     }
 
-    /// <summary>
-    /// Parses a string.
-    /// RFC 8941 § 4.2.6
-    /// </summary>
     private static StringItem ParseString(ref Parser parser)
     {
-        if (!parser.TryConsume('"'))
-        {
-            parser.ThrowParseException("Expected '\"' at start of string");
-        }
-
-        var sb = new StringBuilder();
-        
-        while (true)
-        {
-            if (parser.IsAtEnd)
-            {
-                parser.ThrowParseException("Unterminated string");
-            }
-
-            if (parser.Current == '"')
-            {
-                parser.Advance();
-                break;
-            }
-
-            if (parser.Current == '\\')
-            {
-                parser.Advance();
-                
-                if (parser.IsAtEnd)
-                {
-                    parser.ThrowParseException("Unterminated string escape");
-                }
-
-                if (parser.Current is '"' or '\\')
-                {
-                    sb.Append(parser.Current);
-                    parser.Advance();
-                }
-                else
-                {
-                    parser.ThrowParseException($"Invalid escape sequence '\\{parser.Current}'");
-                }
-            }
-            else if (parser.Current >= 0x20 && parser.Current <= 0x7E)
-            {
-                sb.Append(parser.Current);
-                parser.Advance();
-            }
-            else
-            {
-                parser.ThrowParseException($"Invalid character in string: 0x{(int)parser.Current:X2}");
-            }
-        }
-        
-        return new StringItem(sb.ToString());
-    }
-
-    /// <summary>
-    /// Parses a token.
-    /// RFC 8941 § 4.2.7
-    /// </summary>
-    private static TokenItem ParseToken(ref Parser parser)
-    {
-        if (!parser.IsAlpha() && parser.Current != '*')
-        {
-            parser.ThrowParseException("Token must start with alpha or '*'");
-        }
-
-        var sb = new StringBuilder();
-        sb.Append(parser.Current);
         parser.Advance();
-        
-        while (parser.IsTokenChar())
+        var value = new StringBuilder();
+        while (!parser.IsAtEnd)
         {
-            sb.Append(parser.Current);
+            if (parser.TryConsume('"'))
+            {
+                return new StringItem(value.ToString());
+            }
+            if (parser.TryConsume('\\'))
+            {
+                if (parser.IsAtEnd || parser.Current is not ('"' or '\\'))
+                {
+                    parser.ThrowParseException("Invalid string escape");
+                }
+            }
+            else if (parser.Current is < (char)0x20 or > (char)0x7e)
+            {
+                parser.ThrowParseException("Strings require printable ASCII");
+            }
+            value.Append(parser.Current);
             parser.Advance();
         }
-        
-        return new TokenItem(sb.ToString());
+        parser.ThrowParseException("Unterminated string");
+        return null!;
     }
 
-    /// <summary>
-    /// Parses a byte sequence.
-    /// RFC 8941 § 4.2.8
-    /// </summary>
+    private static TokenItem ParseToken(ref Parser parser)
+    {
+        var value = new StringBuilder();
+        while (parser.IsTokenChar())
+        {
+            value.Append(parser.Current);
+            parser.Advance();
+        }
+        return new TokenItem(value.ToString());
+    }
+
     private static ByteSequenceItem ParseByteSequence(ref Parser parser)
     {
-        if (!parser.TryConsume(':'))
-        {
-            parser.ThrowParseException("Expected ':' at start of byte sequence");
-        }
-
-        var sb = new StringBuilder();
-        
-        while (parser.Current != ':')
+        parser.Advance();
+        var start = parser.Position;
+        var value = new StringBuilder();
+        while (!parser.TryConsume(':'))
         {
             if (parser.IsAtEnd)
             {
                 parser.ThrowParseException("Unterminated byte sequence");
             }
-
-            // Base64 characters: A-Z, a-z, 0-9, +, /, =
-            if ((parser.Current >= 'A' && parser.Current <= 'Z') ||
-                (parser.Current >= 'a' && parser.Current <= 'z') ||
-                (parser.Current >= '0' && parser.Current <= '9') ||
-                parser.Current == '+' || parser.Current == '/' || parser.Current == '=')
+            if (!char.IsAsciiLetterOrDigit(parser.Current) && parser.Current is not ('+' or '/' or '='))
             {
-                sb.Append(parser.Current);
-                parser.Advance();
+                parser.ThrowParseException("Invalid base64 character");
             }
-            else
-            {
-                parser.ThrowParseException($"Invalid character in byte sequence: '{parser.Current}'");
-            }
+            value.Append(parser.Current);
+            parser.Advance();
         }
-
-        if (!parser.TryConsume(':'))
+        while (value.Length % 4 != 0)
         {
-            parser.ThrowParseException("Expected ':' at end of byte sequence");
+            value.Append('=');
         }
-
         try
         {
-            return ByteSequenceItem.FromBase64(sb.ToString());
+            return ByteSequenceItem.FromBase64(value.ToString());
         }
         catch (FormatException ex)
         {
-            throw new StructuredFieldParseException("Invalid base64 in byte sequence", ex);
+            throw new StructuredFieldParseException("Invalid base64 byte sequence", start, ex);
         }
     }
 
-    /// <summary>
-    /// Parses a boolean.
-    /// RFC 8941 § 4.2.9
-    /// </summary>
     private static BooleanItem ParseBoolean(ref Parser parser)
     {
-        if (!parser.TryConsume('?'))
+        parser.Advance();
+        if (parser.TryConsume('1'))
         {
-            parser.ThrowParseException("Expected '?' at start of boolean");
+            return BooleanItem.True;
         }
-
-        if (parser.Current == '0')
+        if (parser.TryConsume('0'))
         {
-            parser.Advance();
-            // Must not use BooleanItem.False singleton because parameters may be mutated after parsing.
-            return new BooleanItem(false);
+            return BooleanItem.False;
         }
-        else if (parser.Current == '1')
-        {
-            parser.Advance();
-            // Must not use BooleanItem.True singleton because parameters may be mutated after parsing.
-            return new BooleanItem(true);
-        }
-        else
-        {
-            parser.ThrowParseException($"Expected '0' or '1' after '?', got '{parser.Current}'");
-        }
-        
-        return null!; // Never reached
+        parser.ThrowParseException("Expected '0' or '1' after '?'");
+        return null!;
     }
 
-    /// <summary>
-    /// Parses a key (for parameters and dictionary keys).
-    /// RFC 8941 § 4.2.3.3
-    /// </summary>
+    private static DisplayStringItem ParseDisplayString(ref Parser parser)
+    {
+        parser.Advance();
+        if (!parser.TryConsume('"'))
+        {
+            parser.ThrowParseException("Expected a quote after '%'");
+        }
+        var start = parser.Position;
+        var bytes = new List<byte>();
+        while (!parser.IsAtEnd)
+        {
+            if (parser.TryConsume('"'))
+            {
+                try
+                {
+                    return new DisplayStringItem(StrictUtf8.GetString(bytes.ToArray()));
+                }
+                catch (DecoderFallbackException ex)
+                {
+                    throw new StructuredFieldParseException("Invalid UTF-8 display string", start, ex);
+                }
+            }
+            if (parser.TryConsume('%'))
+            {
+                var high = LowerHex(parser.Current);
+                var low = LowerHex(parser.Peek());
+                if (high < 0 || low < 0)
+                {
+                    parser.ThrowParseException("Expected two lowercase hexadecimal digits after '%'");
+                }
+                bytes.Add((byte)(high * 16 + low));
+                parser.Advance(2);
+            }
+            else
+            {
+                if (parser.Current is < (char)0x20 or > (char)0x7e)
+                {
+                    parser.ThrowParseException("Unescaped display string characters require printable ASCII");
+                }
+                bytes.Add((byte)parser.Current);
+                parser.Advance();
+            }
+        }
+        parser.ThrowParseException("Unterminated display string");
+        return null!;
+    }
+
+    private static int LowerHex(char c) => c switch
+    {
+        >= '0' and <= '9' => c - '0',
+        >= 'a' and <= 'f' => c - 'a' + 10,
+        _ => -1
+    };
+
     private static string ParseKey(ref Parser parser)
     {
-        if (!parser.IsKeyChar() || parser.IsDigit())
+        if (!TokenItem.IsKeyStart(parser.Current))
         {
-            parser.ThrowParseException("Key must start with lcalpha or '*'");
+            parser.ThrowParseException("Key must start with a lowercase ASCII letter or '*'");
         }
-
-        var sb = new StringBuilder();
-        
+        var key = new StringBuilder();
         while (parser.IsKeyChar())
         {
-            sb.Append(parser.Current);
+            key.Append(parser.Current);
             parser.Advance();
         }
-        
-        var key = sb.ToString();
-        
-        if (key.Length == 0)
-        {
-            parser.ThrowParseException("Empty key");
-        }
-        
-        return key;
+        return key.ToString();
     }
 }

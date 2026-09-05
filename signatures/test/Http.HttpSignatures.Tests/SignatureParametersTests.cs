@@ -150,8 +150,8 @@ public class SignatureParametersTests
     [Fact]
     public void Parse_ComponentWithSfParam_ParsesSfFlag()
     {
-        var name = new StringItem("cache-control");
-        name.Parameters.Add("sf", null);
+        var name = new StructuredFieldItem(new StringItem("priority"));
+        name.Parameters.Add("sf", BooleanItem.True);
         var innerList = new InnerList([name]);
 
         var sp = SignatureParameters.Parse(innerList);
@@ -162,8 +162,8 @@ public class SignatureParametersTests
     [Fact]
     public void Parse_ComponentWithReqParam_ParsesReqFlag()
     {
-        var name = new StringItem("@method");
-        name.Parameters.Add("req", null);
+        var name = new StructuredFieldItem(new StringItem("@method"));
+        name.Parameters.Add("req", BooleanItem.True);
         var innerList = new InnerList([name]);
 
         var sp = SignatureParameters.Parse(innerList);
@@ -174,7 +174,7 @@ public class SignatureParametersTests
     [Fact]
     public void Parse_ComponentWithQueryParamName_ParsesQueryParamName()
     {
-        var name = new StringItem("@query-param");
+        var name = new StructuredFieldItem(new StringItem("@query-param"));
         name.Parameters.Add("name", new StringItem("Pet"));
         var innerList = new InnerList([name]);
 
@@ -195,5 +195,31 @@ public class SignatureParametersTests
         var serialized = sp.Serialize();
 
         serialized.ShouldBe(sfInput);
+    }
+
+    [Fact]
+    public void Parse_PreservesUnknownParametersAndCanonicalizesValues()
+    {
+        var dictionary = StructuredFieldParser.ParseDictionary(
+            "sig1=(\"@method\";flag=?1);created=1618884473;extra=1.000;enabled=?1;date=@999999999999999;label=%\"caf%c3%a9\"");
+
+        var parameters = SignatureParameters.Parse(dictionary["sig1"].InnerList);
+
+        parameters.Created!.Value.ToUnixTimeSeconds().ShouldBe(1618884473);
+        parameters.Serialize().ShouldBe(
+            "(\"@method\";flag);created=1618884473;extra=1.0;enabled;date=@999999999999999;label=%\"caf%c3%a9\"");
+    }
+
+    [Fact]
+    public void Serialize_UsesSharedEscapingForComponentsAndParameters()
+    {
+        var parameters = new SignatureParameters(
+            [ComponentIdentifier.QueryParam("a\"b\\c")])
+        {
+            KeyId = "key\"\\id",
+        };
+
+        parameters.Serialize().ShouldBe(
+            "(\"@query-param\";name=\"a\\\"b\\\\c\");keyid=\"key\\\"\\\\id\"");
     }
 }

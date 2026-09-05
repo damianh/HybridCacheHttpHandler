@@ -17,20 +17,15 @@ var request = new HttpRequestMessage(HttpMethod.Get, "https://httpbin.org/header
 var priority = new PriorityHeader { Urgency = 1, Incremental = true };
 request.SetHeader("Priority", PriorityHeader.Mapper, priority);
 
-// Set a Cache-Control header using the typed mapper
-var cacheControl = new CacheControlHeader { MaxAge = 3600, MustRevalidate = true };
-request.SetHeader("Cache-Control", CacheControlHeader.Mapper, cacheControl);
-
 Console.WriteLine($"  Priority: {request.Headers.GetValues("Priority").First()}");
-Console.WriteLine($"  Cache-Control: {request.Headers.GetValues("Cache-Control").First()}");
 
 // Example 2: Parse typed headers from strings
 Console.WriteLine("\n2. Parsing typed headers:");
 
-var parsedCache = CacheControlHeader.Mapper.Parse("max-age=3600, must-revalidate");
-Console.WriteLine($"  Parsed Cache-Control:");
-Console.WriteLine($"    MaxAge: {parsedCache.MaxAge}");
-Console.WriteLine($"    MustRevalidate: {parsedCache.MustRevalidate}");
+var parsedPriority = PriorityHeader.Mapper.Parse("u=5, i");
+Console.WriteLine($"  Parsed Priority:");
+Console.WriteLine($"    Urgency: {parsedPriority.Urgency}");
+Console.WriteLine($"    Incremental: {parsedPriority.Incremental}");
 
 // Example 3: Round-trip with TryParse
 Console.WriteLine("\n3. Round-trip demonstration:");
@@ -47,13 +42,13 @@ if (PriorityHeader.Mapper.TryParse(serialized, out var parsed))
 // Example 4: Parse from response headers
 Console.WriteLine("\n4. Using TryGetHeader pattern:");
 var mockResponse = new HttpResponseMessage();
-mockResponse.Headers.TryAddWithoutValidation("Cache-Control", "max-age=300, private");
+mockResponse.Headers.TryAddWithoutValidation("Priority", "u=2");
 
-if (mockResponse.TryGetHeader("Cache-Control", CacheControlHeader.Mapper, out var responseCacheControl))
+if (mockResponse.TryGetHeader("Priority", PriorityHeader.Mapper, out var responsePriority))
 {
-    Console.WriteLine($"  Response Cache-Control:");
-    Console.WriteLine($"    MaxAge: {responseCacheControl.MaxAge}");
-    Console.WriteLine($"    Private: {responseCacheControl.Private}");
+    Console.WriteLine($"  Response Priority:");
+    Console.WriteLine($"    Urgency: {responsePriority.Urgency}");
+    Console.WriteLine($"    Incremental: {responsePriority.Incremental}");
 }
 
 Console.WriteLine("\nSample completed successfully!");

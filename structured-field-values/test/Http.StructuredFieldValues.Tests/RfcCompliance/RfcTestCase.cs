@@ -7,7 +7,7 @@ using System.Text.Json.Serialization;
 namespace DamianH.Http.StructuredFieldValues.RfcCompliance;
 
 /// <summary>
-/// Represents a test case from the official RFC 8941 test suite.
+/// Represents a test case from the official Structured Field Values test suite.
 /// </summary>
 public class RfcTestCase
 {

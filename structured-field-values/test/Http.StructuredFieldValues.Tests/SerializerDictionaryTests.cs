@@ -100,7 +100,7 @@ public class SerializerDictionaryTests
     {
         // Arrange
         var dict = new StructuredFieldDictionary();
-        var item = new BooleanItem(true);
+        var item = new StructuredFieldItem(BooleanItem.True);
         item.Parameters.Add("bar", new Http.StructuredFieldValues.TokenItem("baz"));
         dict.Add("foo", item);
 
@@ -116,7 +116,7 @@ public class SerializerDictionaryTests
     {
         // Arrange
         var dict = new StructuredFieldDictionary
-        { { "a", new InnerList(new[]
+        { { "a", new InnerList(new StructuredFieldItem[]
         {
             new IntegerItem(1),
             new IntegerItem(2),
@@ -131,20 +131,20 @@ public class SerializerDictionaryTests
     }
 
     [Fact]
-    public void SerializeDictionary_CacheControl_Success()
+    public void SerializeDictionary_Priority_Success()
     {
         // Arrange
         var dict = new StructuredFieldDictionary
         {
-            { "max-age", new IntegerItem(3600) },
-            { "private", new BooleanItem(true) }
+            { "u", new IntegerItem(3) },
+            { "i", new BooleanItem(true) }
         };
 
         // Act
         var output = StructuredFieldSerializer.SerializeDictionary(dict);
 
         // Assert
-        output.ShouldBe("max-age=3600, private");
+        output.ShouldBe("u=3, i");
     }
 
     [Fact]
@@ -162,10 +162,10 @@ public class SerializerDictionaryTests
     }
 
     [Fact]
-    public void SerializeDictionary_CacheControlRoundTrip_Success()
+    public void SerializeDictionary_PriorityRoundTrip_Success()
     {
         // Arrange
-        var original = "max-age=3600, private";
+        var original = "u=3, i";
 
         // Act
         var parsed = StructuredFieldParser.ParseDictionary(original);

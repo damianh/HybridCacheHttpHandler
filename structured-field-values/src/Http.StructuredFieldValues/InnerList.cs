@@ -7,6 +7,7 @@ namespace DamianH.Http.StructuredFieldValues;
 /// Represents an inner list in a structured field value.
 /// Inner lists are arrays of items with optional parameters.
 /// RFC 8941 § 3.1.1
+/// Mutable nodes use reference equality. Explicitly shared items remain shared.
 /// </summary>
 public sealed class InnerList
 {
@@ -21,30 +22,17 @@ public sealed class InnerList
     /// Initializes a new instance of the <see cref="InnerList"/> class with items.
     /// </summary>
     /// <param name="items">The items to include in the list.</param>
-    public InnerList(IEnumerable<StructuredFieldItem> items)
+    /// <param name="parameters">Parameters to copy into the owned collection.</param>
+    public InnerList(IEnumerable<StructuredFieldItem> items, Parameters? parameters = null)
     {
-        ArgumentNullException.ThrowIfNull(items);
-        _items.AddRange(items);
-        Parameters = new Parameters();
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="InnerList"/> class with items and parameters.
-    /// </summary>
-    /// <param name="items">The items to include in the list.</param>
-    /// <param name="parameters">The parameters to attach to the list.</param>
-    public InnerList(IEnumerable<StructuredFieldItem> items, Parameters parameters)
-    {
-        ArgumentNullException.ThrowIfNull(items);
-        ArgumentNullException.ThrowIfNull(parameters);
-        _items.AddRange(items);
-        Parameters = parameters;
+        AddRange(items);
+        Parameters = parameters is null ? new Parameters() : new Parameters(parameters);
     }
 
     /// <summary>
     /// Gets the parameters associated with this inner list.
     /// </summary>
-    public Parameters Parameters { get; init; }
+    public Parameters Parameters { get; }
 
     /// <summary>
     /// Gets the items in this inner list.
@@ -61,7 +49,15 @@ public sealed class InnerList
     /// </summary>
     /// <param name="index">The zero-based index.</param>
     /// <returns>The item at the specified index.</returns>
-    public StructuredFieldItem this[int index] => _items[index];
+    public StructuredFieldItem this[int index]
+    {
+        get => _items[index];
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _items[index] = value;
+        }
+    }
 
     /// <summary>
     /// Adds an item to the inner list.
@@ -73,6 +69,9 @@ public sealed class InnerList
         _items.Add(item);
     }
 
+    /// <summary>Adds a bare value wrapped in a new item.</summary>
+    public void Add(BareItem value) => Add(new StructuredFieldItem(value));
+
     /// <summary>
     /// Adds multiple items to the inner list.
     /// </summary>
@@ -80,7 +79,12 @@ public sealed class InnerList
     public void AddRange(IEnumerable<StructuredFieldItem> items)
     {
         ArgumentNullException.ThrowIfNull(items);
-        _items.AddRange(items);
+        var snapshot = items.ToArray();
+        foreach (var item in snapshot)
+        {
+            ArgumentNullException.ThrowIfNull(item);
+        }
+        _items.AddRange(snapshot);
     }
 
     /// <summary>
@@ -88,22 +92,6 @@ public sealed class InnerList
     /// </summary>
     public void Clear() => _items.Clear();
 
-    /// <inheritdoc/>
-    public override string ToString()
-    {
-        var itemsStr = string.Join(" ", _items.Select(i => i.ToString()));
-        return Parameters.Count > 0
-            ? $"({itemsStr}){FormatParameters()}"
-            : $"({itemsStr})";
-    }
-
-    private string FormatParameters()
-    {
-        var parts = new List<string>();
-        foreach (var (key, value) in Parameters)
-        {
-            parts.Add(value == null ? $";{key}" : $";{key}={value}");
-        }
-        return string.Join("", parts);
-    }
+    /// <summary>Returns diagnostic text, not wire output; use <see cref="StructuredFieldSerializer"/>.</summary>
+    public override string ToString() => $"InnerList({Count} items; {Parameters.Count} parameters)";
 }

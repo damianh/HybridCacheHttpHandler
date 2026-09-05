@@ -9,7 +9,7 @@ public class ItemMapperTests
 {
     private static readonly StructuredFieldMapper<EncodingItem> EncodingMapper =
         StructuredFieldMapper<EncodingItem>.Item(b => b
-            .TokenValue(x => x.Encoding)
+            .Value(x => x.Encoding, type: ItemType.Token)
             .Parameter("q", x => x.Quality));
 
     [Fact]

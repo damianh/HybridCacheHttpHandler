@@ -4,8 +4,8 @@
 namespace DamianH.Http.StructuredFieldValues.Mapping;
 
 /// <summary>
-/// Describes a mapping from an RFC 8941 item parameter to a POCO property,
-/// capturing compiled property accessors, the target RFC 8941 type, and optionality.
+/// Describes a mapping from an RFC 9651 item parameter to a POCO property,
+/// capturing compiled property accessors, the target RFC 9651 type, and optionality.
 /// </summary>
 internal sealed class ParameterMapping<T>
 {
@@ -25,7 +25,7 @@ internal sealed class ParameterMapping<T>
         ClrType = clrType;
     }
 
-    /// <summary>RFC 8941 parameter key (a token).</summary>
+    /// <summary>RFC 9651 parameter key.</summary>
     internal string Key { get; }
 
     /// <summary>Compiled property getter returning a boxed value.</summary>
@@ -34,12 +34,11 @@ internal sealed class ParameterMapping<T>
     /// <summary>Compiled property setter accepting a boxed value.</summary>
     internal Action<T, object?> Setter { get; }
 
-    /// <summary>RFC 8941 bare item type for this parameter value.</summary>
+    /// <summary>RFC 9651 bare item type for this parameter value.</summary>
     internal ValueKind Kind { get; }
 
     /// <summary>
-    /// Whether the parameter is required during parse.
-    /// A missing required parameter throws <see cref="StructuredFieldParseException"/>.
+    /// Whether absence on parse and null on serialization are rejected.
     /// </summary>
     internal bool IsRequired { get; }
 

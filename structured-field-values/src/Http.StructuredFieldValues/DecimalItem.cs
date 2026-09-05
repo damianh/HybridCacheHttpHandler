@@ -5,14 +5,20 @@ namespace DamianH.Http.StructuredFieldValues;
 
 /// <summary>
 /// Represents a decimal item in a structured field value.
-/// RFC 8941 defines decimals with up to 12 significant digits and up to 3 decimal places.
+/// Decimals have up to 12 integer digits and up to 3 fractional digits.
 /// </summary>
-public sealed class DecimalItem : StructuredFieldItem
+public sealed class DecimalItem : BareItem
 {
     /// <summary>
-    /// The maximum number of significant digits allowed.
+    /// The maximum number of integer digits allowed.
     /// </summary>
-    public const int MaxSignificantDigits = 12;
+    public const int MaxIntegerDigits = 12;
+
+    /// <summary>The minimum representable decimal.</summary>
+    public const decimal MinValue = -999_999_999_999.999m;
+
+    /// <summary>The maximum representable decimal.</summary>
+    public const decimal MaxValue = 999_999_999_999.999m;
 
     /// <summary>
     /// The maximum number of decimal places allowed.
@@ -26,7 +32,7 @@ public sealed class DecimalItem : StructuredFieldItem
     /// </summary>
     /// <param name="value">The decimal value.</param>
     /// <exception cref="ArgumentException">
-    /// Thrown when the value has too many significant digits or decimal places.
+    /// Thrown when the value is outside the allowed range or has unrepresentable precision.
     /// </exception>
     public DecimalItem(decimal value)
     {
@@ -46,7 +52,7 @@ public sealed class DecimalItem : StructuredFieldItem
     public override ItemType Type => ItemType.Decimal;
 
     /// <inheritdoc/>
-    public override string ToString() => _value.ToString("G");
+    public override string ToString() => _value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) =>
@@ -72,34 +78,15 @@ public sealed class DecimalItem : StructuredFieldItem
 
     private static void ValidateDecimal(decimal value)
     {
-        // Get the string representation to count digits
-        var valueStr = Math.Abs(value).ToString("G29");
-        var parts = valueStr.Split('.');
-
-        // Count integer digits (excluding leading zeros)
-        var integerPart = parts[0].TrimStart('0');
-        if (string.IsNullOrEmpty(integerPart))
+        if (value is < MinValue or > MaxValue)
         {
-            integerPart = "0";
+            throw new ArgumentOutOfRangeException(nameof(value), value, "Decimal is outside the RFC 9651 range.");
         }
 
-        // Count decimal places
-        var decimalPlaces = parts.Length > 1 ? parts[1].Length : 0;
-
-        // Calculate total significant digits
-        var totalDigits = integerPart.Length + decimalPlaces;
-
-        if (totalDigits > MaxSignificantDigits)
+        if (decimal.Round(value, MaxDecimalPlaces) != value)
         {
             throw new ArgumentException(
-                $"Decimal value has {totalDigits} significant digits, but RFC 8941 allows maximum {MaxSignificantDigits}.",
-                nameof(value));
-        }
-
-        if (decimalPlaces > MaxDecimalPlaces)
-        {
-            throw new ArgumentException(
-                $"Decimal value has {decimalPlaces} decimal places, but RFC 8941 allows maximum {MaxDecimalPlaces}.",
+                "Decimal values must be exactly representable with at most three fractional digits.",
                 nameof(value));
         }
     }

@@ -7,7 +7,7 @@ namespace DamianH.Http.StructuredFieldValues;
 /// Represents a byte sequence item in a structured field value.
 /// RFC 8941 encodes byte sequences as base64 between colons (e.g., :aGVsbG8=:).
 /// </summary>
-public sealed class ByteSequenceItem : StructuredFieldItem
+public sealed class ByteSequenceItem : BareItem
 {
     private readonly byte[] _value;
 
@@ -21,7 +21,7 @@ public sealed class ByteSequenceItem : StructuredFieldItem
     public ByteSequenceItem(byte[] value)
     {
         ArgumentNullException.ThrowIfNull(value);
-        _value = value;
+        _value = (byte[])value.Clone();
     }
 
     /// <summary>
@@ -43,9 +43,15 @@ public sealed class ByteSequenceItem : StructuredFieldItem
     }
 
     /// <summary>
-    /// Gets the byte array value.
+    /// Gets a defensive copy of the byte array value.
     /// </summary>
-    public byte[] ByteArrayValue => _value;
+    public byte[] ByteArrayValue => ToArray();
+
+    /// <summary>Gets read-only access to the immutable bytes.</summary>
+    public ReadOnlySpan<byte> Bytes => _value;
+
+    /// <summary>Returns a new copy of the bytes.</summary>
+    public byte[] ToArray() => (byte[])_value.Clone();
 
     /// <summary>
     /// Gets the base64-encoded representation of the byte sequence.
@@ -53,7 +59,7 @@ public sealed class ByteSequenceItem : StructuredFieldItem
     public string Base64Value => Convert.ToBase64String(_value);
 
     /// <inheritdoc/>
-    public override object Value => _value;
+    public override object Value => ToArray();
 
     /// <inheritdoc/>
     public override ItemType Type => ItemType.ByteSequence;
@@ -76,13 +82,4 @@ public sealed class ByteSequenceItem : StructuredFieldItem
         return hash.ToHashCode();
     }
 
-    /// <summary>
-    /// Implicit conversion from byte array to ByteSequenceItem.
-    /// </summary>
-    public static implicit operator ByteSequenceItem(byte[] value) => new(value);
-
-    /// <summary>
-    /// Implicit conversion from ByteSequenceItem to byte array.
-    /// </summary>
-    public static implicit operator byte[](ByteSequenceItem item) => item._value;
 }

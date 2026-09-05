@@ -22,7 +22,7 @@ public static class HttpRequestMessageExtensions
             string headerName,
             StructuredFieldMapper<T> mapper,
             [NotNullWhen(true)] out T? value)
-            where T : new()
+            where T : class, new()
         {
             value = default;
 
@@ -32,11 +32,6 @@ public static class HttpRequestMessageExtensions
             }
 
             var headerValue = string.Join(", ", values);
-            if (string.IsNullOrEmpty(headerValue))
-            {
-                return false;
-            }
-
             return mapper.TryParse(headerValue, out value);
         }
 
@@ -51,7 +46,7 @@ public static class HttpRequestMessageExtensions
             string headerName,
             StructuredFieldMapper<T> mapper,
             T value)
-            where T : new()
+            where T : class, new()
         {
             var serialized = mapper.Serialize(value);
             request.Headers.TryAddWithoutValidation(headerName, serialized);

@@ -12,8 +12,8 @@ public class ParametersTests
     {
         var initial = new[]
         {
-            new KeyValuePair<string, StructuredFieldItem?>("a", new IntegerItem(1)),
-            new KeyValuePair<string, StructuredFieldItem?>("b", new IntegerItem(2))
+            new KeyValuePair<string, BareItem>("a", new IntegerItem(1)),
+            new KeyValuePair<string, BareItem>("b", new IntegerItem(2))
         };
 
         var parameters = new Parameters(initial);
@@ -36,12 +36,33 @@ public class ParametersTests
     }
 
     [Fact]
-    public void Add_NullValue_Success()
+    public void Add_Flag_IsNonNullBooleanTrue()
     {
-        var parameters = new Parameters { { "flag", null } };
+        var parameters = new Parameters();
+        parameters.Add("flag");
 
         parameters.Count.ShouldBe(1);
-        parameters["flag"].ShouldBeNull();
+        parameters["flag"].ShouldBeSameAs(BooleanItem.True);
+    }
+
+    [Fact]
+    public void NullValues_AreRejectedByAllEntryPoints()
+    {
+        var parameters = new Parameters();
+        Should.Throw<ArgumentNullException>(() => parameters.Add("flag", null!));
+        Should.Throw<ArgumentNullException>(() => parameters["flag"] = null!);
+        Should.Throw<ArgumentNullException>(() =>
+            new Parameters([new KeyValuePair<string, BareItem>("flag", null!)]));
+        parameters.Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Replacement_PreservesFirstPosition()
+    {
+        var parameters = new Parameters { { "a", new IntegerItem(1) }, { "b", new IntegerItem(2) } };
+        parameters["a"] = BooleanItem.True;
+        parameters.Select(x => x.Key).ShouldBe(["a", "b"]);
+        parameters["a"].ShouldBeSameAs(BooleanItem.True);
     }
 
     [Fact]
@@ -56,7 +77,8 @@ public class ParametersTests
     public void Add_InvalidKey_ThrowsArgumentException()
     {
         var parameters = new Parameters();
-        Should.Throw<ArgumentException>(() => parameters.Add("invalid key", new IntegerItem(1)));
+        var exception = Should.Throw<ArgumentException>(() => parameters.Add("invalid key", new IntegerItem(1)));
+        exception.Message.ShouldContain("Parameter key 'invalid key' is not a valid RFC 9651 key.");
     }
 
     [Fact]

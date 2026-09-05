@@ -51,11 +51,11 @@ public static class SignatureHeaderParser
 
         foreach (var member in dict)
         {
-            if (!member.Value.IsItem || member.Value.Item is not ByteSequenceItem bsi)
+            if (!member.Value.IsItem || member.Value.Item.Value is not ByteSequenceItem bsi)
                 throw new FormatException(
                     $"Signature member '{member.Key}' must be a Byte Sequence item.");
 
-            result[member.Key] = bsi.ByteArrayValue;
+            result[member.Key] = bsi.ToArray();
         }
 
         return result;
@@ -86,7 +86,8 @@ public static class SignatureHeaderParser
         ArgumentException.ThrowIfNullOrEmpty(label);
         ArgumentNullException.ThrowIfNull(signatureBytes);
 
-        var base64 = Convert.ToBase64String(signatureBytes);
-        return $"{label}=:{base64}:";
+        var dictionary = new StructuredFieldDictionary();
+        dictionary.Add(label, new ByteSequenceItem(signatureBytes));
+        return StructuredFieldSerializer.SerializeDictionary(dictionary);
     }
 }

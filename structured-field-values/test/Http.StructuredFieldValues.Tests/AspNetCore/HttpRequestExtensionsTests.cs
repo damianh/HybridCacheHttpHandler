@@ -17,7 +17,29 @@ public class HttpRequestExtensionsTests
 
     private static readonly StructuredFieldMapper<AcceptClientHintHeaderValue> AcceptChMapper =
         StructuredFieldMapper<AcceptClientHintHeaderValue>.List(b => b
-            .TokenElements(x => x.Hints));
+            .Elements(x => x.Hints, type: ItemType.Token));
+
+    [Fact]
+    public void TryGetHeader_PresentEmptyValues_AreDelegatedToMapper()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Headers["Priority"] = "";
+        context.Request.Headers["Accept-CH"] = "";
+        var required = StructuredFieldMapper<PriorityHeader>.Dictionary(b =>
+            b.Member("u", x => x.Urgency, presence: MappingPresence.Required));
+        var item = StructuredFieldMapper<EncodingItem>.Item(b =>
+            b.Value(x => x.Encoding, type: ItemType.Token));
+
+        context.Request.TryGetHeader("Priority", PriorityMapper, out var priority).ShouldBeTrue();
+        priority.ShouldNotBeNull();
+        priority.Urgency.ShouldBeNull();
+        context.Request.TryGetHeader("Accept-CH", AcceptChMapper, out var list).ShouldBeTrue();
+        list.ShouldNotBeNull();
+        list.Hints.ShouldBeEmpty();
+        context.Request.TryGetHeader("Priority", required, out _).ShouldBeFalse();
+        context.Request.TryGetHeader("Priority", item, out _).ShouldBeFalse();
+        context.Request.TryGetHeader("Missing", AcceptChMapper, out _).ShouldBeFalse();
+    }
 
     [Fact]
     public void TryGetHeader_WithValidDictionaryHeader_Success()

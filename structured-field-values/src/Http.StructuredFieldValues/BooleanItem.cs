@@ -7,7 +7,7 @@ namespace DamianH.Http.StructuredFieldValues;
 /// Represents a boolean item in a structured field value.
 /// RFC 8941 represents booleans as ?1 (true) or ?0 (false).
 /// </summary>
-public sealed class BooleanItem : StructuredFieldItem
+public sealed class BooleanItem : BareItem
 {
     private readonly bool _value;
 

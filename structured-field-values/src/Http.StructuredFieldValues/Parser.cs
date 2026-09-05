@@ -4,7 +4,7 @@
 namespace DamianH.Http.StructuredFieldValues;
 
 /// <summary>
-/// Internal helper for parsing structured field values according to RFC 8941.
+/// Internal helper for parsing structured field values according to RFC 9651.
 /// Maintains parsing state and provides low-level parsing primitives.
 /// </summary>
 internal ref struct Parser(ReadOnlySpan<char> input)
@@ -84,6 +84,7 @@ internal ref struct Parser(ReadOnlySpan<char> input)
     /// <summary>
     /// Throws a parse exception with the current position.
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     public void ThrowParseException(string message) => throw new StructuredFieldParseException(message, _position);
 
     /// <summary>
@@ -98,21 +99,13 @@ internal ref struct Parser(ReadOnlySpan<char> input)
 
     /// <summary>
     /// Checks if the character is valid for tokens.
-    /// RFC 8941: ALPHA / DIGIT / &quot;:&quot; / &quot;/&quot; / &quot;.&quot; / &quot;-&quot; / &quot;_&quot; / &quot;~&quot; / &quot;%&quot; / &quot;!&quot; / &quot;$&quot; / &quot;&amp;&quot; / &quot;#&quot; / &quot;+&quot; / &quot;*&quot;
+    /// RFC 9651: tchar / ":" / "/".
     /// </summary>
-    public bool IsTokenChar() =>
-        IsAlpha() || IsDigit() || 
-        Current == ':' || Current == '/' || Current == '.' || 
-        Current == '-' || Current == '_' || Current == '~' ||
-        Current == '%' || Current == '!' || Current == '$' ||
-        Current == '&' || Current == '#' || Current == '+' ||
-        Current == '*';
+    public bool IsTokenChar() => TokenItem.IsTokenCharacter(Current);
 
     /// <summary>
     /// Checks if the character is a valid key character.
     /// RFC 8941: lcalpha / DIGIT / "_" / "-" / "." / "*"
     /// </summary>
-    public bool IsKeyChar() =>
-        (Current >= 'a' && Current <= 'z') || IsDigit() ||
-        Current == '_' || Current == '-' || Current == '.' || Current == '*';
+    public bool IsKeyChar() => TokenItem.IsKeyCharacter(Current);
 }

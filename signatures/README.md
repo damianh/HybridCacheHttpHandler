@@ -26,6 +26,12 @@ RFC 9421 HTTP Message Signatures for signing and verifying HTTP messages.
 dotnet add package DamianH.Http.HttpSignatures
 ```
 
+Repository builds reference the local Structured Field Values project, so both
+libraries use the same object model. NuGet packaging records that project's
+computed version as a dependency. For coordinated releases, publish the matching
+Structured Field Values package before HttpSignatures, from the same source
+commit.
+
 ## Quick Start
 
 The following example shows a complete sign-then-verify round-trip using HMAC-SHA256 (symmetric — the same key is used for both operations):
@@ -171,8 +177,8 @@ Identifies a component of the HTTP message to include in the signature base.
 | Factory method | Description |
 |----------------|-------------|
 | `ComponentIdentifier.Field("content-type")` | Raw header field value |
-| `ComponentIdentifier.FieldSf("content-type")` | Strict SF-serialized header value |
-| `ComponentIdentifier.FieldKey("cache-control", "max-age")` | Specific key from an SF Dictionary header |
+| `ComponentIdentifier.FieldSf("content-digest")` | Strict SF-serialized header value |
+| `ComponentIdentifier.FieldKey("priority", "u")` | Specific key from an SF Dictionary header |
 | `ComponentIdentifier.FieldBs("signature")` | Binary-wrapped header field |
 
 ### IHttpMessageContext

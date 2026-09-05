@@ -21,22 +21,7 @@ internal static class PropertyAccessor
     internal static (Func<T, TValue> getter, Action<T, TValue> setter) Compile<T, TValue>(
         Expression<Func<T, TValue>> expression)
     {
-        var memberExpr = expression.Body as MemberExpression
-            ?? throw new ArgumentException(
-                $"Expression must be a direct property access (e.g. x => x.Property). Got: {expression.Body.NodeType}",
-                nameof(expression));
-
-        var property = memberExpr.Member as PropertyInfo
-            ?? throw new ArgumentException(
-                $"Expression member must be a property. Got: {memberExpr.Member.MemberType}",
-                nameof(expression));
-
-        if (!property.CanRead)
-            throw new ArgumentException($"Property '{property.Name}' does not have a getter.", nameof(expression));
-
-        if (!property.CanWrite)
-            throw new ArgumentException($"Property '{property.Name}' does not have a setter.", nameof(expression));
-
+        var property = GetProperty(expression);
         var getter = expression.Compile();
 
         // Build setter: (T instance, TValue value) => instance.Property = value
@@ -57,14 +42,26 @@ internal static class PropertyAccessor
     /// </summary>
     internal static PropertyInfo GetProperty<T, TValue>(Expression<Func<T, TValue>> expression)
     {
-        var memberExpr = expression.Body as MemberExpression
-            ?? throw new ArgumentException(
-                $"Expression must be a direct property access. Got: {expression.Body.NodeType}",
+        ArgumentNullException.ThrowIfNull(expression);
+        if (expression.Body is not MemberExpression member ||
+            member.Expression != expression.Parameters[0] ||
+            member.Member is not PropertyInfo property ||
+            property.PropertyType != typeof(TValue))
+        {
+            throw new ArgumentException(
+                "Expression must directly access an instance property of its lambda parameter (x => x.Property).",
                 nameof(expression));
+        }
 
-        return memberExpr.Member as PropertyInfo
-            ?? throw new ArgumentException(
-                $"Expression member must be a property. Got: {memberExpr.Member.MemberType}",
+        if (property.GetMethod is not { IsStatic: false } ||
+            property.SetMethod is not { IsStatic: false } ||
+            property.GetIndexParameters().Length != 0)
+        {
+            throw new ArgumentException(
+                $"Property '{property.Name}' must have instance getter and setter accessors.",
                 nameof(expression));
+        }
+
+        return property;
     }
 }

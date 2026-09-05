@@ -11,11 +11,9 @@ internal static class DictionaryMapperFactory
     /// <summary>
     /// Builds a parse delegate that converts a <see cref="StructuredFieldDictionary"/> into a <typeparamref name="T"/>.
     /// </summary>
-    internal static Func<StructuredFieldDictionary, T> BuildParseDelegate<T>(DictionaryBuilder<T> builder)
-        where T : new()
+    internal static Func<StructuredFieldDictionary, T> BuildParseDelegate<T>(MemberMapping<T>[] members)
+        where T : class, new()
     {
-        var members = builder.Members;
-
         return dict =>
         {
             var instance = new T();
@@ -42,7 +40,7 @@ internal static class DictionaryMapperFactory
 
                     var extracted = ItemTypeResolver.ExtractValue(
                         member.Kind,
-                        dictMember.Item,
+                        dictMember.Item.Value,
                         member.ClrType,
                         $"dictionary member '{member.Key}'");
                     member.Setter(instance, extracted);
@@ -56,11 +54,9 @@ internal static class DictionaryMapperFactory
     /// <summary>
     /// Builds a serialize delegate that converts a <typeparamref name="T"/> into a <see cref="StructuredFieldDictionary"/>.
     /// </summary>
-    internal static Func<T, StructuredFieldDictionary> BuildSerializeDelegate<T>(DictionaryBuilder<T> builder)
-        where T : new()
+    internal static Func<T, StructuredFieldDictionary> BuildSerializeDelegate<T>(MemberMapping<T>[] members)
+        where T : class, new()
     {
-        var members = builder.Members;
-
         return instance =>
         {
             var dict = new StructuredFieldDictionary();
@@ -69,24 +65,22 @@ internal static class DictionaryMapperFactory
             {
                 var rawValue = member.Getter(instance);
 
+                if (rawValue == null)
+                {
+                    if (member.IsRequired)
+                        throw new InvalidOperationException(
+                            $"Dictionary member '{member.Key}' is required but the property is null.");
+                    continue;
+                }
+
                 if (member.IsInnerList)
                 {
-                    var innerListMember = SerializeInnerListMember(member, rawValue);
-                    if (innerListMember != null)
-                        dict.Add(member.Key, innerListMember);
+                    dict.Add(member.Key, SerializeInnerListMember(member, rawValue));
                 }
                 else
                 {
-                    if (rawValue == null)
-                    {
-                        if (member.IsRequired)
-                            throw new InvalidOperationException(
-                                $"Dictionary member '{member.Key}' is required but the property is null.");
-                        continue; // skip optional null member
-                    }
-
-                    var item = ItemTypeResolver.ToItem(member.Kind, rawValue)!;
-                    dict.Add(member.Key, DictionaryMember.FromItem(item));
+                    var item = ItemTypeResolver.ToItem(member.Kind, rawValue);
+                    dict.Add(member.Key, StructuredFieldMember.FromItem(item));
                 }
             }
 
@@ -94,7 +88,7 @@ internal static class DictionaryMapperFactory
         };
     }
 
-    private static void ParseInnerListMember<T>(T instance, MemberMapping<T> member, DictionaryMember dictMember)
+    private static void ParseInnerListMember<T>(T instance, MemberMapping<T> member, StructuredFieldMember dictMember)
     {
         if (!dictMember.IsInnerList)
             throw new StructuredFieldParseException(
@@ -119,7 +113,7 @@ internal static class DictionaryMapperFactory
             // Primitive or token elements
             var elements = innerList.Items
                 .Select(item =>
-                    ItemTypeResolver.ExtractValue(config.ElementKind, item, config.ElementClrType,
+                    ItemTypeResolver.ExtractValue(config.ElementKind, item.Value, config.ElementClrType,
                         $"inner list element in '{member.Key}'"))
                 .ToList();
 
@@ -128,31 +122,22 @@ internal static class DictionaryMapperFactory
         }
     }
 
-    private static DictionaryMember? SerializeInnerListMember<T>(MemberMapping<T> member, object? rawValue)
+    private static StructuredFieldMember SerializeInnerListMember<T>(MemberMapping<T> member, object rawValue)
     {
-        if (rawValue == null)
-            return null; // optional inner list is absent
-
         var config = member.InnerList!;
         var collection = (System.Collections.IEnumerable)rawValue;
         var innerList = new InnerList();
 
-        if (config.IsNestedItem)
+        foreach (var element in collection)
         {
-            foreach (var element in collection)
-                innerList.Add(config.NestedItemSerializeDelegate!(element));
-        }
-        else
-        {
-            foreach (var element in collection)
-            {
-                var item = ItemTypeResolver.ToItem(config.ElementKind, element);
-                if (item == null) continue;
-                innerList.Add(item);
-            }
+            if (element is null)
+                throw new InvalidOperationException($"Inner list '{member.Key}' contains a null element.");
+            innerList.Add(config.IsNestedItem
+                ? config.NestedItemSerializeDelegate!(element)
+                : new StructuredFieldItem(ItemTypeResolver.ToItem(config.ElementKind, element)));
         }
 
-        return DictionaryMember.FromInnerList(innerList);
+        return StructuredFieldMember.FromInnerList(innerList);
     }
 
     private static object CreateTypedReadOnlyList(Type elementType, System.Collections.IList elements)

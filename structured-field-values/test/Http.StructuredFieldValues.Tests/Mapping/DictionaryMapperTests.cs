@@ -12,15 +12,15 @@ public class DictionaryMapperTests
             .Member("u", x => x.Urgency)
             .Member("i", x => x.Incremental));
 
-    private static readonly StructuredFieldMapper<CacheControlHeader> CacheControlMapper =
-        StructuredFieldMapper<CacheControlHeader>.Dictionary(b => b
-            .Member("max-age", x => x.MaxAge)
-            .Member("s-maxage", x => x.SMaxAge)
-            .Member("no-cache", x => x.NoCache)
-            .Member("no-store", x => x.NoStore)
-            .Member("must-revalidate", x => x.MustRevalidate)
-            .Member("private", x => x.Private)
-            .Member("public", x => x.Public));
+    private static readonly StructuredFieldMapper<SyntheticDictionaryModel> SyntheticMapper =
+        StructuredFieldMapper<SyntheticDictionaryModel>.Dictionary(b => b
+            .Member("limit", x => x.Limit)
+            .Member("offset", x => x.Offset)
+            .Member("enabled", x => x.Enabled)
+            .Member("audited", x => x.Audited)
+            .Member("durable", x => x.Durable)
+            .Member("local", x => x.Local)
+            .Member("shared", x => x.Shared));
 
     [Fact]
     public void Parse_ValidPriorityHeader_ReturnsExpectedValues()
@@ -129,38 +129,38 @@ public class DictionaryMapperTests
     }
 
     [Fact]
-    public void Parse_CacheControl_MaxAgeAndNoStore()
+    public void Parse_SyntheticDictionary_IntegerAndFlag()
     {
-        var cc = CacheControlMapper.Parse("max-age=3600, no-store");
+        var value = SyntheticMapper.Parse("limit=3600, audited");
 
-        cc.MaxAge.ShouldBe(3600);
-        cc.NoStore.ShouldBe(true);
-        cc.NoCache.ShouldBeNull();
+        value.Limit.ShouldBe(3600);
+        value.Audited.ShouldBe(true);
+        value.Enabled.ShouldBeNull();
     }
 
     [Fact]
-    public void Serialize_CacheControl_MultipleDirectives()
+    public void Serialize_SyntheticDictionary_MultipleMembers()
     {
-        var cc = new CacheControlHeader { MaxAge = 3600, Public = true, MustRevalidate = true };
+        var value = new SyntheticDictionaryModel { Limit = 3600, Shared = true, Durable = true };
 
-        var serialized = CacheControlMapper.Serialize(cc);
+        var serialized = SyntheticMapper.Serialize(value);
 
-        serialized.ShouldContain("max-age=3600");
-        serialized.ShouldContain("must-revalidate");
-        serialized.ShouldContain("public");
+        serialized.ShouldContain("limit=3600");
+        serialized.ShouldContain("durable");
+        serialized.ShouldContain("shared");
     }
 
     [Fact]
-    public void Roundtrip_CacheControl()
+    public void Roundtrip_SyntheticDictionary()
     {
-        var original = "max-age=3600, no-cache, must-revalidate";
-        var parsed = CacheControlMapper.Parse(original);
+        var original = "limit=3600, enabled, durable";
+        var parsed = SyntheticMapper.Parse(original);
 
-        parsed.MaxAge.ShouldBe(3600);
-        parsed.NoCache.ShouldBe(true);
-        parsed.MustRevalidate.ShouldBe(true);
+        parsed.Limit.ShouldBe(3600);
+        parsed.Enabled.ShouldBe(true);
+        parsed.Durable.ShouldBe(true);
 
-        var serialized = CacheControlMapper.Serialize(parsed);
+        var serialized = SyntheticMapper.Serialize(parsed);
         serialized.ShouldBe(original);
     }
 

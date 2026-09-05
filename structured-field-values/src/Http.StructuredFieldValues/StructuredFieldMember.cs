@@ -4,54 +4,48 @@
 namespace DamianH.Http.StructuredFieldValues;
 
 /// <summary>
-/// Represents a member of a structured field dictionary.
-/// A dictionary member consists of an item or inner list with optional parameters.
-/// RFC 8941 § 3.2
+/// A common list or dictionary member containing either an item or an inner list.
+/// Parameters are owned by the contained node, which may be explicitly shared.
+/// This wrapper uses reference equality.
 /// </summary>
-public sealed class DictionaryMember
+public sealed class StructuredFieldMember
 {
     private readonly StructuredFieldItem? _item;
     private readonly InnerList? _innerList;
 
-    private DictionaryMember(StructuredFieldItem? item, InnerList? innerList, Parameters parameters)
+    private StructuredFieldMember(StructuredFieldItem? item, InnerList? innerList)
     {
-        if (item == null && innerList == null)
-        {
-            throw new ArgumentException("DictionaryMember must contain either an item or an inner list.");
-        }
-        
-        if (item != null && innerList != null)
-        {
-            throw new ArgumentException("DictionaryMember cannot contain both an item and an inner list.");
-        }
-
         _item = item;
         _innerList = innerList;
-        Parameters = parameters ?? new Parameters();
     }
 
     /// <summary>
-    /// Creates a DictionaryMember from an item.
+    /// Creates a member from an item without copying the mutable node.
     /// </summary>
     /// <param name="item">The item.</param>
-    /// <param name="parameters">Optional parameters.</param>
-    /// <returns>A new DictionaryMember.</returns>
-    public static DictionaryMember FromItem(StructuredFieldItem item, Parameters? parameters = null)
+    /// <returns>A new member.</returns>
+    public static StructuredFieldMember FromItem(StructuredFieldItem item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        return new DictionaryMember(item, null, parameters ?? new Parameters());
+        return new StructuredFieldMember(item, null);
     }
 
     /// <summary>
-    /// Creates a DictionaryMember from an inner list.
+    /// Creates a member from an inner list without copying the mutable node.
     /// </summary>
     /// <param name="innerList">The inner list.</param>
-    /// <returns>A new DictionaryMember.</returns>
-    public static DictionaryMember FromInnerList(InnerList innerList)
+    /// <returns>A new member.</returns>
+    public static StructuredFieldMember FromInnerList(InnerList innerList)
     {
         ArgumentNullException.ThrowIfNull(innerList);
-        return new DictionaryMember(null, innerList, new Parameters());
+        return new StructuredFieldMember(null, innerList);
     }
+
+    /// <summary>Creates a member by wrapping a bare value in a new item.</summary>
+    public static StructuredFieldMember FromItem(BareItem value) => FromItem(new StructuredFieldItem(value));
+
+    /// <summary>Gets the parameters of the contained item or inner list.</summary>
+    public Parameters Parameters => IsItem ? Item.Parameters : InnerList.Parameters;
 
     /// <summary>
     /// Gets a value indicating whether this member is an item.
@@ -76,11 +70,6 @@ public sealed class DictionaryMember
     public InnerList InnerList => _innerList ?? throw new InvalidOperationException("This member is not an inner list.");
 
     /// <summary>
-    /// Gets the parameters associated with this member.
-    /// </summary>
-    public Parameters Parameters { get; }
-
-    /// <summary>
     /// Tries to get the item value.
     /// </summary>
     /// <param name="item">The item if this member is an item.</param>
@@ -96,32 +85,25 @@ public sealed class DictionaryMember
     /// </summary>
     /// <param name="innerList">The inner list if this member is an inner list.</param>
     /// <returns>True if this member is an inner list, false otherwise.</returns>
-    public bool TryGetInnerList(out InnerList? innerList)
+    public bool TryGetInnerList([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out InnerList? innerList)
     {
         innerList = _innerList;
         return _innerList != null;
     }
 
-    /// <inheritdoc/>
-    public override string ToString()
-    {
-        var value = IsItem ? Item.ToString()! : InnerList.ToString()!;
-        if (Parameters.Count > 0)
-        {
-            var paramStr = string.Join("", Parameters.Select(p => 
-                p.Value == null ? $";{p.Key}" : $";{p.Key}={p.Value}"));
-            return $"{value}{paramStr}";
-        }
-        return value;
-    }
+    /// <summary>Returns diagnostic text, not wire output; use <see cref="StructuredFieldSerializer"/>.</summary>
+    public override string ToString() => IsItem ? Item.ToString()! : InnerList.ToString()!;
 
     /// <summary>
-    /// Implicit conversion from StructuredFieldItem to DictionaryMember.
+    /// Implicit conversion from an item to a member.
     /// </summary>
-    public static implicit operator DictionaryMember(StructuredFieldItem item) => FromItem(item);
+    public static implicit operator StructuredFieldMember(StructuredFieldItem item) => FromItem(item);
+
+    /// <summary>Implicit conversion from a bare value to a member.</summary>
+    public static implicit operator StructuredFieldMember(BareItem value) => FromItem(value);
 
     /// <summary>
-    /// Implicit conversion from InnerList to DictionaryMember.
+    /// Implicit conversion from an inner list to a member.
     /// </summary>
-    public static implicit operator DictionaryMember(InnerList innerList) => FromInnerList(innerList);
+    public static implicit operator StructuredFieldMember(InnerList innerList) => FromInnerList(innerList);
 }

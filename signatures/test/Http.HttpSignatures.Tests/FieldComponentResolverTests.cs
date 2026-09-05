@@ -87,6 +87,27 @@ public sealed class FieldComponentResolverTests
     }
 
     [Fact]
+    public void Resolve_DictionaryKey_InnerListUsesCanonicalSharedWriter()
+    {
+        var ctx = TestHttpMessageContext.CreateRequest("GET", "https", "example.com", "/");
+        ctx.AddHeader("example-dict", "a=(\"hello world\";flag=?1 @0 %\"caf%c3%a9\");q=1.000");
+
+        var result = FieldComponentResolver.Resolve(ComponentIdentifier.FieldKey("example-dict", "a"), ctx);
+
+        result.ShouldBe("(\"hello world\";flag @0 %\"caf%c3%a9\");q=1.0");
+    }
+
+    [Fact]
+    public void Resolve_DictionaryKey_MalformedKeyReportsSignatureBaseException()
+    {
+        var ctx = TestHttpMessageContext.CreateRequest("GET", "https", "example.com", "/");
+        ctx.AddHeader("example-dict", "_invalid=1");
+
+        Should.Throw<SignatureBaseException>(() =>
+            FieldComponentResolver.Resolve(ComponentIdentifier.FieldKey("example-dict", "a"), ctx));
+    }
+
+    [Fact]
     public void Resolve_DictionaryKey_MissingKey_Throws()
     {
         var ctx = TestHttpMessageContext.CreateRequest("GET", "https", "example.com", "/");

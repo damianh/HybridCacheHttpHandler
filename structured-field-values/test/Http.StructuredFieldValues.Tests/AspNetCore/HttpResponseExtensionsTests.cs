@@ -17,7 +17,20 @@ public class HttpResponseExtensionsTests
 
     private static readonly StructuredFieldMapper<AcceptClientHintHeaderValue> AcceptChMapper =
         StructuredFieldMapper<AcceptClientHintHeaderValue>.List(b => b
-            .TokenElements(x => x.Hints));
+            .Elements(x => x.Hints, type: ItemType.Token));
+
+    [Fact]
+    public void SetHeader_EmptyDictionaryAndList_PreservePresentHeaders()
+    {
+        var context = new DefaultHttpContext();
+        context.Response.SetHeader("Priority", PriorityMapper, new PriorityHeader());
+        context.Response.SetHeader("Accept-CH", AcceptChMapper, new AcceptClientHintHeaderValue());
+
+        context.Response.Headers.ContainsKey("Priority").ShouldBeTrue();
+        context.Response.Headers["Priority"].ToString().ShouldBe("");
+        context.Response.Headers.ContainsKey("Accept-CH").ShouldBeTrue();
+        context.Response.Headers["Accept-CH"].ToString().ShouldBe("");
+    }
 
     [Fact]
     public void SetHeader_WithDictionaryType_Success()

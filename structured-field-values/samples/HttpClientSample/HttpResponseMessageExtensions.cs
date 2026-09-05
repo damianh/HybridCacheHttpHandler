@@ -22,7 +22,7 @@ public static class HttpResponseMessageExtensions
             string headerName,
             StructuredFieldMapper<T> mapper,
             [NotNullWhen(true)] out T? value)
-            where T : new()
+            where T : class, new()
         {
             value = default;
 
@@ -32,11 +32,6 @@ public static class HttpResponseMessageExtensions
             }
 
             var headerValue = string.Join(", ", values);
-            if (string.IsNullOrEmpty(headerValue))
-            {
-                return false;
-            }
-
             return mapper.TryParse(headerValue, out value);
         }
     }

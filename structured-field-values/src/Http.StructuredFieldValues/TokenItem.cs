@@ -1,19 +1,15 @@
 // Copyright (c) Duende Software. All rights reserved.
 // See LICENSE in the project root for license information.
 
-using System.Text.RegularExpressions;
-
 namespace DamianH.Http.StructuredFieldValues;
 
 /// <summary>
 /// Represents a token item in a structured field value.
 /// RFC 8941 defines tokens as unquoted identifiers following specific syntax rules.
-/// Tokens must start with an alpha character or '*' and can contain alphanumerics, ':', '/', '.', '-', '_', '~', '%', '!', '$', '&amp;', '#', '+', or '*'.
+/// Tokens start with an ASCII letter or '*' and continue with HTTP tchar, ':' or '/'.
 /// </summary>
-public sealed partial class TokenItem : StructuredFieldItem
+public sealed class TokenItem : BareItem
 {
-    private static readonly Regex TokenPattern = CreateTokenPattern();
-
     private readonly string _value;
 
     /// <summary>
@@ -70,8 +66,21 @@ public sealed partial class TokenItem : StructuredFieldItem
     /// </summary>
     /// <param name="value">The value to validate.</param>
     /// <returns>True if valid, false otherwise.</returns>
-    public static bool IsValidToken(string value) =>
-        !string.IsNullOrEmpty(value) && TokenPattern.IsMatch(value);
+    public static bool IsValidToken(string value)
+    {
+        if (string.IsNullOrEmpty(value) || !IsTokenStart(value[0]))
+        {
+            return false;
+        }
+        foreach (var c in value.AsSpan(1))
+        {
+            if (!IsTokenCharacter(c))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /// <summary>
     /// Validates whether a string is a valid RFC 8941 key (for dictionary member keys and parameter keys).
@@ -80,25 +89,40 @@ public sealed partial class TokenItem : StructuredFieldItem
     /// </summary>
     /// <param name="value">The value to validate.</param>
     /// <returns>True if valid, false otherwise.</returns>
-    public static bool IsValidKey(string value) =>
-        !string.IsNullOrEmpty(value) && KeyPattern.IsMatch(value);
+    public static bool IsValidKey(string value)
+    {
+        if (string.IsNullOrEmpty(value) || !IsKeyStart(value[0]))
+        {
+            return false;
+        }
+        foreach (var c in value.AsSpan(1))
+        {
+            if (!IsKeyCharacter(c))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    internal static bool IsTokenStart(char c) => char.IsAsciiLetter(c) || c == '*';
+
+    internal static bool IsTokenCharacter(char c) =>
+        char.IsAsciiLetterOrDigit(c) || c is '!' or '#' or '$' or '%' or '&' or '\'' or '*'
+            or '+' or '-' or '.' or '^' or '_' or '`' or '|' or '~' or ':' or '/';
+
+    internal static bool IsKeyStart(char c) => c is >= 'a' and <= 'z' or '*';
+
+    internal static bool IsKeyCharacter(char c) => IsKeyStart(c) || char.IsAsciiDigit(c) || c is '_' or '-' or '.';
 
     private static void ValidateToken(string value)
     {
         if (!IsValidToken(value))
         {
             throw new ArgumentException(
-                $"Invalid token: '{value}'. RFC 8941 tokens must start with alpha or '*' " +
-                "and contain only alphanumerics, ':', '/', '.', '-', '_', '~', '%', '!', '$', '&', '#', '+', or '*'.",
+                $"Invalid token: '{value}'. Tokens must start with ASCII alpha or '*' " +
+                "and contain only HTTP tchar, ':' or '/'.",
                 nameof(value));
         }
     }
-
-    [GeneratedRegex("^[a-zA-Z*][a-zA-Z0-9:/.\\-_~%!$&#+*]*$", RegexOptions.Compiled)]
-    private static partial Regex CreateTokenPattern();
-
-    [GeneratedRegex("^[a-z*][a-z0-9_\\-.*]*$", RegexOptions.Compiled)]
-    private static partial Regex CreateKeyPattern();
-
-    private static readonly Regex KeyPattern = CreateKeyPattern();
 }

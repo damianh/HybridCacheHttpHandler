@@ -9,7 +9,7 @@ public class NestedItemMapperTests
 {
     private static readonly StructuredFieldMapper<EncodingItem> EncodingItemMapper =
         StructuredFieldMapper<EncodingItem>.Item(b => b
-            .TokenValue(x => x.Encoding)
+            .Value(x => x.Encoding, type: ItemType.Token)
             .Parameter("q", x => x.Quality));
 
     private class AcceptEncodingHeader

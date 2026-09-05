@@ -8,12 +8,13 @@ namespace DamianH.Http.StructuredFieldValues;
 
 /// <summary>
 /// Represents a structured field dictionary.
-/// Dictionaries are ordered maps of key-value pairs where keys are tokens.
+/// Dictionaries are ordered maps from valid keys to non-null members.
 /// RFC 8941 § 3.2
+/// This mutable collection uses reference equality and retains explicitly shared nodes.
 /// </summary>
-public sealed class StructuredFieldDictionary : IEnumerable<KeyValuePair<string, DictionaryMember>>
+public sealed class StructuredFieldDictionary : IEnumerable<KeyValuePair<string, StructuredFieldMember>>
 {
-    private readonly OrderedDictionary<string, DictionaryMember> _members = new();
+    private readonly OrderedDictionary<string, StructuredFieldMember> _members = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StructuredFieldDictionary"/> class.
@@ -26,7 +27,7 @@ public sealed class StructuredFieldDictionary : IEnumerable<KeyValuePair<string,
     /// Initializes a new instance of the <see cref="StructuredFieldDictionary"/> class with members.
     /// </summary>
     /// <param name="members">The members to include in the dictionary.</param>
-    public StructuredFieldDictionary(IEnumerable<KeyValuePair<string, DictionaryMember>> members)
+    public StructuredFieldDictionary(IEnumerable<KeyValuePair<string, StructuredFieldMember>> members)
     {
         ArgumentNullException.ThrowIfNull(members);
         
@@ -46,12 +47,13 @@ public sealed class StructuredFieldDictionary : IEnumerable<KeyValuePair<string,
     /// </summary>
     /// <param name="key">The member key (must be a valid token).</param>
     /// <returns>The dictionary member.</returns>
-    public DictionaryMember this[string key]
+    public StructuredFieldMember this[string key]
     {
         get => _members[key];
         set
         {
             ValidateKey(key);
+            ArgumentNullException.ThrowIfNull(value);
             _members[key] = value;
         }
     }
@@ -61,7 +63,7 @@ public sealed class StructuredFieldDictionary : IEnumerable<KeyValuePair<string,
     /// </summary>
     /// <param name="key">The member key (must be a valid token).</param>
     /// <param name="member">The dictionary member.</param>
-    public void Add(string key, DictionaryMember member)
+    public void Add(string key, StructuredFieldMember member)
     {
         ArgumentNullException.ThrowIfNull(member);
         ValidateKey(key);
@@ -76,8 +78,11 @@ public sealed class StructuredFieldDictionary : IEnumerable<KeyValuePair<string,
     public void Add(string key, StructuredFieldItem item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        Add(key, DictionaryMember.FromItem(item));
+        Add(key, StructuredFieldMember.FromItem(item));
     }
+
+    /// <summary>Adds a bare value wrapped in a new item and member.</summary>
+    public void Add(string key, BareItem value) => Add(key, StructuredFieldMember.FromItem(value));
 
     /// <summary>
     /// Adds an inner list with the specified key.
@@ -87,7 +92,7 @@ public sealed class StructuredFieldDictionary : IEnumerable<KeyValuePair<string,
     public void Add(string key, InnerList innerList)
     {
         ArgumentNullException.ThrowIfNull(innerList);
-        Add(key, DictionaryMember.FromInnerList(innerList));
+        Add(key, StructuredFieldMember.FromInnerList(innerList));
     }
 
     /// <summary>
@@ -96,7 +101,7 @@ public sealed class StructuredFieldDictionary : IEnumerable<KeyValuePair<string,
     /// <param name="key">The member key.</param>
     /// <param name="member">The dictionary member if found.</param>
     /// <returns>True if the member exists, false otherwise.</returns>
-    public bool TryGetValue(string key, [NotNullWhen(true)] out DictionaryMember? member) => _members.TryGetValue(key, out member);
+    public bool TryGetValue(string key, [NotNullWhen(true)] out StructuredFieldMember? member) => _members.TryGetValue(key, out member);
 
     /// <summary>
     /// Determines whether a member with the specified key exists.
@@ -120,25 +125,21 @@ public sealed class StructuredFieldDictionary : IEnumerable<KeyValuePair<string,
     /// <summary>
     /// Gets an enumerator that iterates through the dictionary in insertion order.
     /// </summary>
-    public IEnumerator<KeyValuePair<string, DictionaryMember>> GetEnumerator() => _members.GetEnumerator();
+    public IEnumerator<KeyValuePair<string, StructuredFieldMember>> GetEnumerator() => _members.GetEnumerator();
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    /// <inheritdoc/>
-    public override string ToString()
-    {
-        var pairs = _members.Select(kvp => $"{kvp.Key}={kvp.Value}");
-        return string.Join(", ", pairs);
-    }
+    /// <summary>Returns diagnostic text, not wire output; use <see cref="StructuredFieldSerializer"/>.</summary>
+    public override string ToString() => $"Dictionary({Count} members)";
 
     private static void ValidateKey(string key)
     {
         ArgumentException.ThrowIfNullOrEmpty(key);
-        
+
         if (!TokenItem.IsValidKey(key))
         {
             throw new ArgumentException(
-                $"Dictionary key '{key}' is not a valid RFC 8941 key. " +
+                $"Dictionary key '{key}' is not a valid RFC 9651 key. " +
                 "Keys must start with a lowercase letter or '*' and contain only " +
                 "lowercase letters, digits, '_', '-', '.', or '*'.",
                 nameof(key));

@@ -71,7 +71,7 @@ public class SerializerListTests
     {
         // Arrange
         var list = new StructuredFieldList();
-        var innerList = new InnerList(new[]
+        var innerList = new InnerList(new StructuredFieldItem[]
         {
             new IntegerItem(1),
             new IntegerItem(2),
@@ -91,8 +91,8 @@ public class SerializerListTests
     {
         // Arrange
         var list = new StructuredFieldList();
-        list.Add(new InnerList(new[] { new IntegerItem(1), new IntegerItem(2) }));
-        list.Add(new InnerList(new[] { new IntegerItem(3), new IntegerItem(4) }));
+        list.Add(new InnerList([new IntegerItem(1), new IntegerItem(2)]));
+        list.Add(new InnerList([new IntegerItem(3), new IntegerItem(4)]));
 
         // Act
         var output = StructuredFieldSerializer.SerializeList(list);
@@ -106,10 +106,8 @@ public class SerializerListTests
     {
         // Arrange
         var list = new StructuredFieldList();
-        var item = new Http.StructuredFieldValues.TokenItem("foo")
-        {
-            Parameters = new Parameters { { "a", new IntegerItem(1) } }
-        };
+        var item = new StructuredFieldItem(new TokenItem("foo"),
+            new Parameters { { "a", new IntegerItem(1) } });
         list.Add(item);
 
         // Act
@@ -124,10 +122,8 @@ public class SerializerListTests
     {
         // Arrange
         var list = new StructuredFieldList();
-        var innerList = new InnerList(new[] { new IntegerItem(1), new IntegerItem(2) })
-        {
-            Parameters = new Parameters { { "a", new Http.StructuredFieldValues.TokenItem("foo") } }
-        };
+        var innerList = new InnerList([new IntegerItem(1), new IntegerItem(2)],
+            new Parameters { { "a", new TokenItem("foo") } });
         list.Add(innerList);
 
         // Act
@@ -156,14 +152,10 @@ public class SerializerListTests
     {
         // Arrange
         var list = new StructuredFieldList();
-        var item1 = new IntegerItem(1)
-        {
-            Parameters = new Parameters { { "a", new Http.StructuredFieldValues.TokenItem("x") } }
-        };
-        var item2 = new IntegerItem(2)
-        {
-            Parameters = new Parameters { { "b", new Http.StructuredFieldValues.TokenItem("y") } }
-        };
+        var item1 = new StructuredFieldItem(new IntegerItem(1),
+            new Parameters { { "a", new TokenItem("x") } });
+        var item2 = new StructuredFieldItem(new IntegerItem(2),
+            new Parameters { { "b", new TokenItem("y") } });
         list.Add(new InnerList(new[] { item1, item2 }));
 
         // Act
