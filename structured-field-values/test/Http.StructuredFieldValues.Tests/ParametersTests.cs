@@ -77,7 +77,8 @@ public class ParametersTests
     public void Add_InvalidKey_ThrowsArgumentException()
     {
         var parameters = new Parameters();
-        Should.Throw<ArgumentException>(() => parameters.Add("invalid key", new IntegerItem(1)));
+        var exception = Should.Throw<ArgumentException>(() => parameters.Add("invalid key", new IntegerItem(1)));
+        exception.Message.ShouldContain("Parameter key 'invalid key' is not a valid RFC 9651 key.");
     }
 
     [Fact]

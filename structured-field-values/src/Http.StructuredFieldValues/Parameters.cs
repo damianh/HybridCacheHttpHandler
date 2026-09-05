@@ -116,7 +116,7 @@ public sealed class Parameters : IEnumerable<KeyValuePair<string, BareItem>>
         if (!TokenItem.IsValidKey(key))
         {
             throw new ArgumentException(
-                $"Parameter key '{key}' is not a valid RFC 8941 key. " +
+                $"Parameter key '{key}' is not a valid RFC 9651 key. " +
                 "Keys must start with a lowercase letter or '*' and contain only " +
                 "lowercase letters, digits, '_', '-', '.', or '*'.",
                 nameof(key));

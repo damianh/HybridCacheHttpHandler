@@ -96,7 +96,8 @@ public class StructuredFieldDictionaryTests
     public void Add_InvalidKey_ThrowsArgumentException()
     {
         var dict = new StructuredFieldDictionary();
-        Should.Throw<ArgumentException>(() => dict.Add("invalid key", new IntegerItem(1)));
+        var exception = Should.Throw<ArgumentException>(() => dict.Add("invalid key", new IntegerItem(1)));
+        exception.Message.ShouldContain("Dictionary key 'invalid key' is not a valid RFC 9651 key.");
     }
 
     [Fact]

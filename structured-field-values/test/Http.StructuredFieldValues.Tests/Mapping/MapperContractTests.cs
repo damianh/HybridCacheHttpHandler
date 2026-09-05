@@ -254,9 +254,9 @@ public class MapperContractTests
         var list = StructuredFieldMapper<Model>.List(b => b.Elements(x => x.Values));
         foreach (var invalidMapper in new[] { dictionary, list })
         {
-            Should.Throw<ArgumentException>(() =>
+            Should.Throw<InvalidOperationException>(() =>
                 new ListBuilder<Model>().Elements(x => x.Children, invalidMapper));
-            Should.Throw<ArgumentException>(() =>
+            Should.Throw<InvalidOperationException>(() =>
                 new DictionaryBuilder<Model>().InnerList("children", x => x.Children, invalidMapper));
         }
     }

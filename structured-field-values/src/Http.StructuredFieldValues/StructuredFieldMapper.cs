@@ -127,7 +127,7 @@ public sealed class StructuredFieldMapper<T> where T : class, new()
     internal void EnsureItemMapper()
     {
         if (_fieldKind != FieldKind.Item)
-            throw new ArgumentException("Nested element mappings require a mapper created via Item().", "elementMapper");
+            throw new InvalidOperationException("Nested element mappings require a mapper created via Item().");
     }
 
     internal T ParseItem(StructuredFieldItem item)
