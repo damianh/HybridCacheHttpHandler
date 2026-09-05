@@ -11,9 +11,12 @@ the body directly to `Stream.Null`, without caller-side buffering or string
 conversion. Requests explicitly created by the benchmarks, responses, clients,
 and service providers are disposed.
 
-Miss benchmarks rebuild their cache in targeted `IterationSetup` and issue one
-measured request per iteration. Cleanup verifies one origin call and a subsequent
-cache hit. This bounds retained cache state rather than accumulating unique keys.
+Miss benchmarks rebuild their cache in targeted `IterationSetup`, which makes
+BenchmarkDotNet default to one invocation with no unrolling for those methods.
+Cleanup verifies one benchmark invocation, one origin call, and a subsequent
+cache hit. The invocation check rejects iterations mixing a miss with later hits,
+even if the origin count is still one. This bounds retained cache state rather
+than accumulating unique keys.
 Do not override invocation count for these methods. Single-operation iterations
 can produce noisy timing and allocation measurements; they are not steady-state
 throughput tests.

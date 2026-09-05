@@ -26,6 +26,7 @@ public class CachingBenchmarks
     private HttpClient _cachedClient = null!;
     private HttpClient _uncachedClient = null!;
     private SizedFakeHandler _fakeHandler = null!;
+    private int _cacheMissInvocations;
 
     [GlobalSetup]
     public async Task Setup()
@@ -79,11 +80,17 @@ public class CachingBenchmarks
     {
         Cleanup();
         Setup().GetAwaiter().GetResult();
+        _cacheMissInvocations = 0;
     }
 
     [IterationCleanup(Target = nameof(CacheMiss_Store))]
     public void VerifyCacheMiss()
     {
+        if (_cacheMissInvocations != 1)
+        {
+            throw new InvalidOperationException("Expected exactly one benchmark invocation per miss iteration.");
+        }
+
         if (_fakeHandler.RequestCount != 1)
         {
             throw new InvalidOperationException("Expected exactly one origin request per miss iteration.");
@@ -94,7 +101,8 @@ public class CachingBenchmarks
 
     private async Task VerifyStoredResponseAsync()
     {
-        await CacheMiss_Store();
+        var response = await _cachedClient.GetAsync(MissUrl, HttpCompletionOption.ResponseHeadersRead);
+        await response.DrainAsync();
         if (_fakeHandler.RequestCount != 1)
         {
             throw new InvalidOperationException("The cache miss did not store a reusable response.");
@@ -104,6 +112,7 @@ public class CachingBenchmarks
     [Benchmark]
     public async Task CacheMiss_Store()
     {
+        _cacheMissInvocations++;
         var response = await _cachedClient.GetAsync(MissUrl, HttpCompletionOption.ResponseHeadersRead);
         await response.DrainAsync();
     }

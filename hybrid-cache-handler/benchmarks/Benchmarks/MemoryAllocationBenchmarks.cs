@@ -24,6 +24,7 @@ public class MemoryAllocationBenchmarks
     private SizedFakeHandler _fakeHandler = null!;
     private string _hitUrl = null!;
     private string _missUrl = null!;
+    private int _cacheMissInvocations;
 
     [Params(1024, 10 * 1024, 50 * 1024, 100 * 1024, 500 * 1024, 1024 * 1024)]
     public int ResponseSize { get; set; }
@@ -68,11 +69,17 @@ public class MemoryAllocationBenchmarks
     {
         Cleanup();
         Setup().GetAwaiter().GetResult();
+        _cacheMissInvocations = 0;
     }
 
     [IterationCleanup(Target = nameof(CacheMiss_InitialStore))]
     public void VerifyCacheMiss()
     {
+        if (_cacheMissInvocations != 1)
+        {
+            throw new InvalidOperationException("Expected exactly one benchmark invocation per miss iteration.");
+        }
+
         if (_fakeHandler.RequestCount != 1)
         {
             throw new InvalidOperationException("Expected exactly one origin request per miss iteration.");
@@ -83,7 +90,8 @@ public class MemoryAllocationBenchmarks
 
     private async Task VerifyStoredResponseAsync()
     {
-        await CacheMiss_InitialStore();
+        var response = await _cachedClient.GetAsync(_missUrl, HttpCompletionOption.ResponseHeadersRead);
+        await response.DrainAsync();
         if (_fakeHandler.RequestCount != 1)
         {
             throw new InvalidOperationException("The cache miss did not store a reusable response.");
@@ -93,6 +101,7 @@ public class MemoryAllocationBenchmarks
     [Benchmark(Description = "Cache Miss - Initial Store")]
     public async Task CacheMiss_InitialStore()
     {
+        _cacheMissInvocations++;
         var response = await _cachedClient.GetAsync(_missUrl, HttpCompletionOption.ResponseHeadersRead);
         await response.DrainAsync();
     }
