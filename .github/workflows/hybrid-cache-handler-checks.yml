@@ -45,6 +45,11 @@ jobs:
           dotnet run --project Benchmarks.csproj --configuration Release -- --exporters json
         continue-on-error: true
 
+      - name: Run streaming staging benchmarks
+        run: |
+          cd hybrid-cache-handler/benchmarks/Benchmarks
+          dotnet run --project Benchmarks.csproj --configuration Release -- --filter "*StreamingFillBenchmarks*" --job short --exporters json
+
       - name: Add benchmark results to summary
         if: always()
         run: |
@@ -64,8 +69,13 @@ jobs:
           if-no-files-found: ignore
 
   cache-conformance:
-    name: RFC 9111 conformance
-    runs-on: ubuntu-latest
+    name: "RFC 9111 conformance: ${{ matrix.mode }} (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        mode: [default, filesystem]
     permissions:
       contents: read
     timeout-minutes: 30
@@ -82,13 +92,20 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Run RFC 9111 conformance suite
-        run: ./hybrid-cache-handler/conformance/run-conformance.sh
+      - name: Run RFC 9111 conformance suite (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash hybrid-cache-handler/conformance/run-conformance.sh ${{ matrix.mode == 'filesystem' && '--file-system' || '' }}
+
+      - name: Run RFC 9111 conformance suite (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\hybrid-cache-handler\conformance\run-conformance.ps1 ${{ matrix.mode == 'filesystem' && '-FileSystem' || '' }}
 
       - name: Upload conformance results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cache-conformance-results
-          path: hybrid-cache-handler/conformance/results.json
+          name: cache-conformance-results-${{ matrix.mode }}-${{ matrix.os }}
+          path: hybrid-cache-handler/conformance/results${{ matrix.mode == 'filesystem' && '-filesystem' || '' }}.json
           if-no-files-found: ignore

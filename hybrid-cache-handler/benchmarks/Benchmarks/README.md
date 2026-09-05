@@ -23,6 +23,22 @@ dotnet run -c Release --filter "*CachingBenchmarks*"
 
 ## Benchmark Categories
 
+### StreamingFillBenchmarks
+
+```bash
+dotnet run -c Release -- --filter "*StreamingFillBenchmarks*"
+```
+
+Generates 1, 32, and 128 MiB responses without a preallocated body, requests headers-first,
+and drains to `Stream.Null`. Runs with internal compression on and off. A discard-only
+external store deliberately returns misses: this isolates handler staging and upload
+streaming from SDK allocation/network costs and persistent body retention.
+
+Compare allocation growth, throughput, and collections across sizes. Total allocations
+can grow with the number of asynchronous reads even when live buffers remain bounded;
+`MemoryDiagnoser` does not measure peak working set or spool-disk usage. These benchmarks
+do not establish real-cloud interoperability or cloud-provider memory bounds.
+
 ### 1. MemoryAllocationBenchmarks
 **Focus**: Memory allocation patterns across different response sizes
 

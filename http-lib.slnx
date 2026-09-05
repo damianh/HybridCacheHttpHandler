@@ -23,10 +23,18 @@
   </Folder>
   <Folder Name="/hybrid-cache-handler/src/">
     <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler/HttpHybridCacheHandler.csproj" />
-    <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.ContentStore.Stowage/HttpHybridCacheHandler.ContentStore.Stowage.csproj" />
+    <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.Abstractions/HttpHybridCacheHandler.Abstractions.csproj" />
+    <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.ContentStore.AzureBlob/HttpHybridCacheHandler.ContentStore.AzureBlob.csproj" />
+    <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.ContentStore.S3/HttpHybridCacheHandler.ContentStore.S3.csproj" />
+    <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.ContentStore.GoogleCloudStorage/HttpHybridCacheHandler.ContentStore.GoogleCloudStorage.csproj" />
+    <Project Path="hybrid-cache-handler/src/HttpHybridCacheHandler.ContentStore.FileSystem/HttpHybridCacheHandler.ContentStore.FileSystem.csproj" />
   </Folder>
   <Folder Name="/hybrid-cache-handler/test/">
     <Project Path="hybrid-cache-handler/test/HttpHybridCacheHandler.Tests/HttpHybridCacheHandler.Tests.csproj" />
+    <Project Path="hybrid-cache-handler/test/HttpHybridCacheHandler.ContentStore.AzureBlob.Tests/HttpHybridCacheHandler.ContentStore.AzureBlob.Tests.csproj" />
+    <Project Path="hybrid-cache-handler/test/HttpHybridCacheHandler.ContentStore.S3.Tests/HttpHybridCacheHandler.ContentStore.S3.Tests.csproj" />
+    <Project Path="hybrid-cache-handler/test/HttpHybridCacheHandler.ContentStore.GoogleCloudStorage.Tests/HttpHybridCacheHandler.ContentStore.GoogleCloudStorage.Tests.csproj" />
+    <Project Path="hybrid-cache-handler/test/HttpHybridCacheHandler.ContentStore.FileSystem.Tests/HttpHybridCacheHandler.ContentStore.FileSystem.Tests.csproj" />
   </Folder>
   <Folder Name="/hybrid-cache-handler/samples/">
     <Project Path="hybrid-cache-handler/samples/HttpClientFactorySample/HttpClientFactorySample.csproj" />

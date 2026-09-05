@@ -5,8 +5,10 @@
 #   ./run-conformance.ps1              # run suite, compare against baseline
 #   ./run-conformance.ps1 -Update      # run suite, rewrite the baseline
 #   ./run-conformance.ps1 -TestId xyz  # run/debug a single test (no gating)
+#   ./run-conformance.ps1 -FileSystem  # streaming filesystem mode, same baseline
 param(
     [switch]$Update,
+    [switch]$FileSystem,
     [string]$TestId,
     [int]$OriginPort = 8000,
     [int]$ProxyPort = 8081
@@ -19,7 +21,10 @@ $suiteRepo = 'https://github.com/http-tests/cache-tests.git'
 $suitePin = 'b55b8bda3dbb8c927c04e85bd8d496a8caa3e4ba'
 $proxyProject = Join-Path $conformanceDir 'ConformanceProxy\ConformanceProxy.csproj'
 $resultsPath = Join-Path $conformanceDir 'results.json'
+if ($FileSystem) { $resultsPath = Join-Path $conformanceDir 'results-filesystem.json' }
 $baselinePath = Join-Path $conformanceDir 'expected-results.json'
+$fileSystemMode = $FileSystem.IsPresent.ToString().ToLowerInvariant()
+$contentRoot = Join-Path $conformanceDir ".content-store-$([Guid]::NewGuid().ToString('N'))"
 
 function Wait-ForHttp([string]$Url, [int]$TimeoutSeconds = 30) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -76,7 +81,8 @@ try {
     Write-Host "Starting ConformanceProxy on :$ProxyPort"
     $proxyProc = Start-Process -FilePath 'dotnet' `
         -ArgumentList 'run', '--project', $proxyProject, '--no-build', '--', `
-            '--port', $ProxyPort, '--origin', "http://127.0.0.1:$OriginPort" `
+            '--port', $ProxyPort, '--origin', "http://127.0.0.1:$OriginPort", `
+            '--file-system', $fileSystemMode, '--content-root', $contentRoot `
         -WorkingDirectory $conformanceDir -PassThru -WindowStyle Hidden
 
     Wait-ForHttp "http://127.0.0.1:$OriginPort/"
@@ -103,6 +109,9 @@ try {
                 taskkill /PID $proc.Id /T /F 2>$null | Out-Null
             } else {
                 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $contentRoot) {
+                Remove-Item -LiteralPath $contentRoot -Recurse -Force
             }
         }
     }

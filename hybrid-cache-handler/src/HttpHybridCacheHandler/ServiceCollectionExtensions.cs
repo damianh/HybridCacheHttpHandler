@@ -99,6 +99,10 @@ public static class ServiceCollectionExtensions
             options.FallbackCacheDuration = previewOptions.FallbackCacheDuration;
             options.CompressionThreshold = previewOptions.CompressionThreshold;
             options.LargeContentThreshold = previewOptions.LargeContentThreshold;
+            options.SpoolMemoryThreshold = previewOptions.SpoolMemoryThreshold;
+            options.MaxSpoolDiskBytes = previewOptions.MaxSpoolDiskBytes;
+            options.MaxConcurrentDiskSpools = previewOptions.MaxConcurrentDiskSpools;
+            options.SpoolDirectory = previewOptions.SpoolDirectory;
             options.CompressibleContentTypes = previewOptions.CompressibleContentTypes;
             options.CacheableContentTypes = previewOptions.CacheableContentTypes;
             options.IncludeDiagnosticHeaders = previewOptions.IncludeDiagnosticHeaders;

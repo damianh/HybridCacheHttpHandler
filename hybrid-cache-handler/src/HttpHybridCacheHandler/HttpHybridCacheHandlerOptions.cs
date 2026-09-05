@@ -8,6 +8,29 @@ namespace DamianH.HttpHybridCacheHandler;
 /// </summary>
 public class HttpHybridCacheHandlerOptions
 {
+    /// <summary>Memory threshold per staging stream (default 64 KiB). Compression may use a second staging stream.</summary>
+    public int SpoolMemoryThreshold { get; set; } = 64 * 1024;
+
+    /// <summary>Per-process aggregate active disk spool budget (default 1 GiB). Exhaustion bypasses caching.</summary>
+    public long MaxSpoolDiskBytes { get; set; } = 1024L * 1024 * 1024;
+
+    /// <summary>Per-process maximum number of disk spools, including compression staging (default 32).</summary>
+    public int MaxConcurrentDiskSpools { get; set; } = 32;
+
+    /// <summary>Parent directory for private process-owned spool files. Defaults to the system temporary directory.</summary>
+    public string? SpoolDirectory { get; set; }
+
+    internal void ValidateSpooling()
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(SpoolMemoryThreshold);
+        ArgumentOutOfRangeException.ThrowIfNegative(MaxSpoolDiskBytes);
+        ArgumentOutOfRangeException.ThrowIfNegative(MaxConcurrentDiskSpools);
+        if (SpoolDirectory is { Length: 0 })
+        {
+            throw new ArgumentException("The spool directory must not be empty.", nameof(SpoolDirectory));
+        }
+    }
+
     /// <summary>
     /// Default minimum content size in bytes to enable compression. Set to 1 KB.
     /// </summary>

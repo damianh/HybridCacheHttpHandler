@@ -19,6 +19,16 @@ on:
         description: "Version number (x.y.z or x.y.z-prerelease.1)"
         required: true
         type: string
+      pack-target:
+        description: "build.cs target for only the selected package"
+        required: false
+        type: string
+        default: pack
+      artifact-directory:
+        description: "Selected package output directory relative to the product"
+        required: false
+        type: string
+        default: artifacts
     secrets:
       NUGET_ORG_APIKEY:
         required: true
@@ -71,17 +81,25 @@ jobs:
 
       - name: Pack NuGet package
         # Runs after tagging so MinVer derives the package version from the new tag.
-        run: dotnet run ${{ inputs.product }}/build.cs -- pack
+        run: dotnet run ${{ inputs.product }}/build.cs -- ${{ inputs.pack-target }}
+
+      - name: Verify selected package
+        env:
+          PACKAGE_FILE: ${{ inputs.product }}/${{ inputs.artifact-directory }}/${{ inputs.package }}.${{ inputs.version }}.nupkg
+        run: test -f "$PACKAGE_FILE"
 
       - name: Push to NuGet.org
+        env:
+          PACKAGE_FILE: ${{ inputs.product }}/${{ inputs.artifact-directory }}/${{ inputs.package }}.${{ inputs.version }}.nupkg
         run: |
-          dotnet nuget push "${{ inputs.product }}/artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_ORG_APIKEY }} --skip-duplicate
+          dotnet nuget push "$PACKAGE_FILE" --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_ORG_APIKEY }} --skip-duplicate
 
       - name: Upload packages as artifacts
         uses: actions/upload-artifact@v4
         with:
           name: nuget-packages-${{ inputs.package }}-${{ inputs.version }}
-          path: ${{ inputs.product }}/artifacts/*.nupkg
+          path: ${{ inputs.product }}/${{ inputs.artifact-directory }}/${{ inputs.package }}.${{ inputs.version }}.nupkg
+          if-no-files-found: error
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

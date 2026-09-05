@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <!-- Release Abstractions first; advance this floor only when consumers need new contracts. -->
+    <HttpCacheAbstractionsPackageVersion Condition="'$(HttpCacheAbstractionsPackageVersion)' == ''">0.1.0</HttpCacheAbstractionsPackageVersion>
+  </PropertyGroup>
+
+  <!-- Keep project references for development, but never ship their independently computed
+       MinVer prerelease as the package dependency. This is NuGet's pack-only version list. -->
+  <Target Name="UseReleasedHttpCacheAbstractionsVersion"
+          AfterTargets="_GetProjectReferenceVersions">
+    <ItemGroup>
+      <_ProjectReferencesWithVersions Update="@(_ProjectReferencesWithVersions)"
+          Condition="'%(_ProjectReferencesWithVersions.Filename)' == 'HttpHybridCacheHandler.Abstractions'">
+        <ProjectVersion>$(HttpCacheAbstractionsPackageVersion)</ProjectVersion>
+      </_ProjectReferencesWithVersions>
+    </ItemGroup>
+  </Target>
+</Project>

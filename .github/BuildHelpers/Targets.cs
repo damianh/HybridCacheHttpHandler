@@ -29,7 +29,8 @@ public static class Targets
     /// Repo-relative path to the lib's packable src project
     /// (e.g. <c>signatures/src/Http.HttpSignatures</c>).
     /// </param>
-    public static void SharedTargets(string slnfPath, string packProjectPath)
+    /// <param name="registerPack">Whether to register the default single-project pack target.</param>
+    public static void SharedTargets(string slnfPath, string packProjectPath, bool registerPack = true)
     {
         ArgumentNullException.ThrowIfNull(slnfPath);
         ArgumentNullException.ThrowIfNull(packProjectPath);
@@ -45,12 +46,24 @@ public static class Targets
         Target(Clean, () =>
             RunAsync("dotnet", $"clean {slnfPath}", RepoRoot.Value));
 
-        Target(Pack, dependsOn: [Build], () =>
+        if (registerPack)
+        {
+            PackTarget(Pack, packProjectPath, $"{libDir}/artifacts");
+        }
+    }
+
+    /// <summary>
+    /// Registers a pack target for one project and its isolated artifact directory.
+    /// </summary>
+    public static void PackTarget(string targetName, string packProjectPath, string artifactsPath) =>
+        Target(targetName, dependsOn: [Build], () =>
             RunAsync(
                 "dotnet",
-                $"pack {packProjectPath} --no-build -c Release -o {libDir}/artifacts",
+                $"pack {packProjectPath} --no-build -c Release -o {artifactsPath}",
                 RepoRoot.Value));
-    }
+
+    public static void AggregateTarget(string targetName, IEnumerable<string> dependsOn) =>
+        Target(targetName, dependsOn);
 
     /// <summary>
     /// Registers a test target that runs <c>dotnet test</c> on a test project with standard options.

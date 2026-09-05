@@ -38,6 +38,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\HttpHybridCacheHandler.Abstractions\HttpHybridCacheHandler.Abstractions.csproj" />
     <InternalsVisibleTo Include="HttpHybridCacheHandler.Tests" />
     <InternalsVisibleTo Include="Tests" />
   </ItemGroup>

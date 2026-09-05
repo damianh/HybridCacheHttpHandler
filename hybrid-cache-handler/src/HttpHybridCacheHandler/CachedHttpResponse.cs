@@ -18,7 +18,7 @@ internal sealed class CachedHttpEntry
 /// Cached HTTP response metadata without the content body.
 /// Content is stored separately to avoid Base64 encoding overhead in distributed cache.
 /// </summary>
-internal sealed class CachedHttpMetadata
+internal sealed record CachedHttpMetadata
 {
     public required int StatusCode { get; init; }
     public required string ContentKey { get; init; }
@@ -48,4 +48,6 @@ internal sealed class CachedHttpMetadata
     public long? RangeEnd { get; init; }
     public long? RangeTotalLength { get; init; }
     public bool IsStoredExternally { get; init; }
+    public Guid PublicationSession { get; init; }
+    public long PublicationSequence { get; init; }
 }

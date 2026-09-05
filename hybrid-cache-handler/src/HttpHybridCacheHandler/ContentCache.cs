@@ -1,7 +1,6 @@
 // Copyright (c) Damian Hickey. All rights reserved.
 // See LICENSE in the project root for license information.
 
-using System.Buffers;
 using Microsoft.Extensions.Caching.Hybrid;
 
 namespace DamianH.HttpHybridCacheHandler;
@@ -13,13 +12,13 @@ internal sealed class ContentCache(HybridCache cache) : IHttpCacheContentStore
 {
     public async ValueTask WriteAsync(
         string contentKey,
-        ReadOnlySequence<byte> content,
+        Stream content,
+        long contentLength,
         IEnumerable<string>? tags,
         Ct ct)
     {
-        var payload = content.IsSingleSegment
-            ? content.First.ToArray()
-            : content.ToArray();
+        var payload = new byte[checked((int)contentLength)];
+        await content.ReadExactlyAsync(payload, ct);
 
         // Store content as byte[] in HybridCache.
         await cache.SetAsync(contentKey, payload, tags: tags, cancellationToken: ct);

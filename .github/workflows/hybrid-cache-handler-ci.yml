@@ -10,6 +10,8 @@ on:
       - .github/BuildHelpers/**
       - .github/workflows/hybrid-cache-handler-ci.yml
       - .github/workflows/ci-template.yml
+      - .github/workflows/hybrid-cache-handler-release.yml
+      - .github/workflows/release-template.yml
       - hybrid-cache-handler/**
       - .editorconfig
       - Directory.Build.props
@@ -20,6 +22,8 @@ on:
       - .github/BuildHelpers/**
       - .github/workflows/hybrid-cache-handler-ci.yml
       - .github/workflows/ci-template.yml
+      - .github/workflows/hybrid-cache-handler-release.yml
+      - .github/workflows/release-template.yml
       - hybrid-cache-handler/**
       - .editorconfig
       - Directory.Build.props
@@ -31,4 +35,6 @@ jobs:
     uses: ./.github/workflows/ci-template.yml
     with:
       product: hybrid-cache-handler
-      test-targets: '["test"]'
+      test-targets: '["test-handler", "test-azureblob", "test-s3", "test-gcs", "test-filesystem"]'
+      os-matrix: '["ubuntu-latest", "windows-latest"]'
+      pack-target: pack-all

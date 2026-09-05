@@ -1,7 +1,6 @@
 // Copyright (c) Damian Hickey. All rights reserved.
 // See LICENSE in the project root for license information.
 
-using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
@@ -128,15 +127,17 @@ public class LargeContentStoreTests
         public int WriteCount { get; private set; }
         public int ReadCount { get; private set; }
 
-        public ValueTask WriteAsync(
+        public async ValueTask WriteAsync(
             string contentKey,
-            ReadOnlySequence<byte> content,
+            Stream content,
+            long contentLength,
             IEnumerable<string>? tags,
             Ct ct)
         {
             WriteCount++;
-            _entries[contentKey] = content.ToArray();
-            return ValueTask.CompletedTask;
+            var bytes = new byte[checked((int)contentLength)];
+            await content.ReadExactlyAsync(bytes, ct);
+            _entries[contentKey] = bytes;
         }
 
         public ValueTask<Stream?> OpenReadAsync(string contentKey, Ct ct)
