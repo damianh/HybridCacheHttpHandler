@@ -73,6 +73,7 @@ internal static class ForwardedValueValidator
         pathBase = default;
         if (value.Length == 0)
         {
+            pathBase = PathString.Empty;
             return true;
         }
         if (value[0] != '/' || value.StartsWith("//", StringComparison.Ordinal))
